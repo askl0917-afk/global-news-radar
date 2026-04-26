@@ -1,21 +1,27 @@
-# Global News Radar V16
+# Global News Radar V17
 
-V16 adds explicit multi-keyword search logic and importance-first sorting.
+V17 adds a selectable financial-news time range.
 
 ## What changed
 
-- New search logic selector:
-  - 交集 AND: search all terms together, e.g. `NVIDIA intel` means NVIDIA + Intel related articles.
-  - 聯集 OR: search each term separately and merge results.
-- Yahoo Finance RSS behavior:
-  - AND mode: only used for single ticker queries to avoid contamination.
-  - OR mode: fetches each inferred ticker separately, e.g. NVIDIA -> NVDA, Intel -> INTC.
-- Results now sort by importance first:
-  - A first
-  - then B
-  - then C
-  - then D
-- Within the same importance grade, results sort by source quality and recency.
+- Added "財經新聞時間範圍":
+  - 最近 1 小時
+  - 最近 6 小時
+  - 最近 12 小時
+  - 最近 24 小時
+  - 最近 3 天
+  - 最近 7 天
+  - 不限時間
+- Google News RSS query gets a `when:` hint.
+- Results are also locally filtered by timestamp.
+- If a time range is selected, articles without timestamps are excluded.
+- Keeps V16 multi-keyword logic:
+  - 交集 AND
+  - 聯集 OR
+- Keeps importance-first sorting:
+  - A → B → C → D
+  - then source quality
+  - then recency
 
 ## Deploy on Streamlit Community Cloud
 

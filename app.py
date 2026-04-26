@@ -19,7 +19,7 @@ from streamlit_folium import st_folium
 
 
 # ============================================================
-# Global News Radar V16
+# Global News Radar V17
 # 投資情報雷達穩定版
 #
 # What changed:
@@ -273,6 +273,52 @@ def build_query_by_logic(query: str, query_logic: str) -> list:
     return [" ".join(terms)]
 
 
+def time_range_to_hours(time_range: str):
+    mapping = {
+        "最近 1 小時": 1,
+        "最近 6 小時": 6,
+        "最近 12 小時": 12,
+        "最近 24 小時": 24,
+        "最近 3 天": 72,
+        "最近 7 天": 168,
+        "不限時間": None,
+    }
+    return mapping.get(time_range, 24)
+
+
+def google_when_hint(time_range: str) -> str:
+    """Google News RSS sometimes respects when: syntax.
+
+    We still apply local filtering after fetching, so this is only a query hint.
+    """
+    mapping = {
+        "最近 1 小時": "when:1h",
+        "最近 6 小時": "when:6h",
+        "最近 12 小時": "when:12h",
+        "最近 24 小時": "when:1d",
+        "最近 3 天": "when:3d",
+        "最近 7 天": "when:7d",
+    }
+    return mapping.get(time_range, "")
+
+
+def apply_time_filter(df: pd.DataFrame, time_range: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    hours = time_range_to_hours(time_range)
+    if hours is None:
+        return df
+
+    out = df.copy()
+    out["time_utc"] = pd.to_datetime(out["time_utc"], errors="coerce", utc=True)
+    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(hours=hours)
+
+    # If user asked for a time range, keep only articles with known timestamps.
+    out = out[out["time_utc"].notna() & (out["time_utc"] >= cutoff)]
+    return out
+
+
 
 def wrapped_longitudes(lon):
     try:
@@ -411,7 +457,7 @@ def parse_feed_datetime(entry) -> pd.Timestamp:
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def fetch_google_news_rss(query: str, max_items: int = 20, preferred_domains=None) -> pd.DataFrame:
+def fetch_google_news_rss(query: str, max_items: int = 20, preferred_domains=None, time_range: str = "最近 24 小時") -> pd.DataFrame:
     query = (query or "").strip()
     if not query:
         return pd.DataFrame()
@@ -419,11 +465,13 @@ def fetch_google_news_rss(query: str, max_items: int = 20, preferred_domains=Non
     preferred_domains = preferred_domains or []
     rows = []
 
-    queries = [query]
+    hint = google_when_hint(time_range)
+    base_query = f"{query} {hint}".strip()
+    queries = [base_query]
 
     # Extra domain-focused Google News searches.
     for d in preferred_domains[:4]:
-        queries.append(f'{query} site:{d}')
+        queries.append(f'{base_query} site:{d}')
 
     for q in queries:
         url = f"https://news.google.com/rss/search?q={quote_plus(q)}&hl=en-US&gl=US&ceid=US:en"
@@ -531,6 +579,7 @@ def search_finance_news(
     use_yahoo: bool,
     preferred_domains,
     query_logic: str = "交集 AND",
+    time_range: str = "最近 24 小時",
 ) -> pd.DataFrame:
     frames = []
     query_list = build_query_by_logic(query, query_logic)
@@ -540,7 +589,7 @@ def search_finance_news(
         # In AND mode, search all keywords together.
         per_query_limit = max(5, int(max_items / max(1, len(query_list))))
         for q in query_list:
-            frames.append(fetch_google_news_rss(q, max_items=per_query_limit, preferred_domains=preferred_domains))
+            frames.append(fetch_google_news_rss(q, max_items=per_query_limit, preferred_domains=preferred_domains, time_range=time_range))
 
     if use_yahoo:
         # Yahoo Finance RSS is ticker-based.
@@ -564,6 +613,10 @@ def search_finance_news(
         return pd.DataFrame()
 
     df = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["title"])
+    df = apply_time_filter(df, time_range=time_range)
+    if df.empty:
+        return pd.DataFrame()
+
     df = enrich_articles(df, translate_titles=translate_titles)
 
     # Final cap after union/boost searches.
@@ -882,7 +935,7 @@ def build_graph(feed: pd.DataFrame) -> str:
 # UI
 # -------------------------------
 
-st.set_page_config(page_title="Global News Radar V16", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Global News Radar V17", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -951,12 +1004,13 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V16：投資情報雷達穩定版")
+st.title("🌍 Global News Radar V17：投資情報雷達穩定版")
 
 with st.sidebar:
     st.header("搜尋")
     query = st.text_input("關鍵字 / 公司 / 人名", value="NVIDIA")
     query_logic = st.radio("多關鍵字邏輯", ["交集 AND", "聯集 OR"], index=0, help="例：NVIDIA intel。交集=同時找兩者相關；聯集=分別找 NVIDIA 與 Intel 後合併。")
+    time_range = st.selectbox("財經新聞時間範圍", ["最近 1 小時", "最近 6 小時", "最近 12 小時", "最近 24 小時", "最近 3 天", "最近 7 天", "不限時間"], index=3)
     max_items = st.slider("最多新聞篇數", 5, 50, 20, step=5)
     translate_titles = st.checkbox("原文標題 + 智慧翻譯成繁中", value=True)
 
@@ -1015,6 +1069,7 @@ if search_button:
             use_yahoo=use_yahoo,
             preferred_domains=preferred_domains,
             query_logic=query_logic,
+            time_range=time_range,
         )
 
         if not articles.empty:
@@ -1040,13 +1095,13 @@ col3.metric("全球事件", f"{len(events_filtered):,}")
 col4.metric("事件原始數", f"{len(events_all):,}")
 
 if st.session_state.get("last_success_query"):
-    st.caption(f"上次成功查詢：{st.session_state['last_success_query']}")
+    st.caption(f"上次成功查詢：{st.session_state['last_success_query']}｜目前選擇時間範圍：{time_range}")
 
 tab_feed, tab_map, tab_graph, tab_raw = st.tabs(["統合新聞流", "統合地圖", "關係圖", "原始資料"])
 
 with tab_feed:
     st.subheader("統合新聞流")
-    st.caption("V16：可選交集 / 聯集搜尋，並依重要性 A→B→C→D 優先排序。")
+    st.caption("V17：可選財經新聞時間範圍；結果依重要性 A→B→C→D 優先排序。")
 
     if feed.empty:
         st.info("尚未查到資料。請打開側欄設定關鍵字後按「更新統合新聞流」。")
