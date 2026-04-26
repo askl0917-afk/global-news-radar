@@ -1,12 +1,14 @@
-# Global News Radar V5
+# Global News Radar V6
 
-V5 adds company-news translation and a company-news map.
+V6 improves translation and mobile reading.
 
 ## What changed
 
-- Keeps the English headline.
-- Adds a Traditional Chinese auto-translation column.
-- Adds a Company News Map tab.
+- Keeps the original headline, regardless of language.
+- Uses automatic language detection to translate headlines into Traditional Chinese.
+- No need to manually maintain 100 language-pair rules.
+- Adds a mobile card layout and a desktop table layout.
+- Keeps the Company News Map tab.
 - Company News Map uses `source_country` as approximate location.
   - This is the news source country, not necessarily the real event location.
 - Event Map remains the original GDELT Event Database map for geopolitical/social events.

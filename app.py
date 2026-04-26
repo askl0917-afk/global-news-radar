@@ -9,6 +9,7 @@ import networkx as nx
 import pandas as pd
 import requests
 import streamlit as st
+from deep_translator import GoogleTranslator
 from folium.plugins import MarkerCluster
 from pyvis.network import Network
 from streamlit_folium import st_folium
@@ -173,27 +174,29 @@ def load_latest_events(num_files: int = 4, max_rows_per_file: int = 20000) -> pd
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def translate_title_to_zh_tw(title: str) -> str:
-    """Translate one headline into Traditional Chinese using a free translation endpoint.
+def translate_title_to_zh_tw(title: str, source_language: str = "") -> str:
+    """Translate a headline from any detected language into Traditional Chinese.
 
-    If the service is unavailable, return an empty string instead of breaking the app.
+    Smart approach:
+    - Use GoogleTranslator with source='auto', so we don't maintain 100 language pairs.
+    - If GDELT already says the article is Chinese, keep the original headline.
+    - Fail softly if the free translation service is temporarily unavailable.
     """
     title = (title or "").strip()
+    source_language = (source_language or "").strip().lower()
+
     if not title:
         return ""
 
+    # If the title is already Chinese, keep it as the Chinese version.
+    if "chinese" in source_language or source_language in {"zh", "zh-cn", "zh-tw"}:
+        return title
+
     try:
-        params = {
-            "q": title[:450],
-            "langpair": "en|zh-TW",
-        }
-        r = requests.get(MYMEMORY_TRANSLATE_API, params=params, timeout=15)
-        if r.status_code != 200:
-            return ""
-        data = r.json()
-        translated = data.get("responseData", {}).get("translatedText", "")
+        translated = GoogleTranslator(source="auto", target="zh-TW").translate(title[:450])
         translated = html.unescape(str(translated)).strip()
-        if translated.lower() == title.lower():
+
+        if not translated or translated.lower() == title.lower():
             return ""
         return translated
     except Exception:
@@ -223,7 +226,7 @@ def search_company_news_cached(query: str, timespan: str = "24h", max_records: i
     }
 
     headers = {
-        "User-Agent": "GlobalNewsRadarV5/1.0"
+        "User-Agent": "GlobalNewsRadarV6/1.0"
     }
 
     try:
@@ -275,7 +278,7 @@ def search_company_news_cached(query: str, timespan: str = "24h", max_records: i
         df = df.drop_duplicates(subset=["url"]).sort_values("time_utc", ascending=False)
 
         if translate_titles:
-            df["title_zh"] = df["title"].apply(translate_title_to_zh_tw)
+            df["title_zh"] = df.apply(lambda row: translate_title_to_zh_tw(row.get("title", ""), row.get("language", "")), axis=1)
         else:
             df["title_zh"] = ""
 
@@ -419,8 +422,8 @@ def build_relationship_graph(df: pd.DataFrame, max_events: int = 80) -> str:
     return html_path
 
 
-st.set_page_config(page_title="Global News Radar V5", layout="wide")
-st.title("🌍 Global News Radar V5：全球事件地圖 + 公司新聞搜尋")
+st.set_page_config(page_title="Global News Radar V6", layout="wide")
+st.title("🌍 Global News Radar V6：全球事件地圖 + 公司新聞搜尋")
 
 with st.sidebar:
     st.header("A. 全球事件地圖")
@@ -441,7 +444,7 @@ with st.sidebar:
     company_query = st.text_input(
         "新聞關鍵字",
         value="NVIDIA",
-        help="V5 建議先用單一關鍵字，例如 NVIDIA。會保留英文標題，並嘗試產生繁體中文翻譯。"
+        help="V5 建議先用單一關鍵字，例如 NVIDIA。會保留原文標題，並嘗試用自動語言偵測翻成繁體中文。"
     )
     timespan = st.selectbox(
         "新聞時間範圍",
@@ -449,7 +452,8 @@ with st.sidebar:
         index=2
     )
     max_records = st.slider("最多新聞篇數", 5, 50, 10, step=5)
-    translate_titles = st.checkbox("保留英文標題，並翻譯成中文", value=True)
+    translate_titles = st.checkbox("保留原文標題，並智慧翻譯成繁中", value=True)
+    display_mode = st.radio("閱讀版型", ["手機卡片", "電腦表格"], index=0)
     search_button = st.button("搜尋公司新聞", type="primary")
 
 with st.spinner("正在抓取 GDELT 最新事件資料..."):
@@ -501,7 +505,7 @@ tab_news, tab_company_map, tab_map, tab_table, tab_graph = st.tabs(["公司新�
 
 with tab_news:
     st.subheader("公司 / 財經新聞搜尋")
-    st.caption("V5 版：公司新聞會保留英文標題並嘗試翻成中文；公司新聞地圖以新聞來源國家定位。")
+    st.caption("V6 版：公司新聞會保留原文標題，並用自動語言偵測翻成繁中；公司新聞地圖以新聞來源國家定位。")
 
     if articles.empty:
         st.info("尚未搜尋，或目前沒有查到公司新聞。若看到限流或非 JSON，請等 5～10 分鐘再查，先用單一關鍵字 NVIDIA。")
@@ -529,34 +533,48 @@ with tab_news:
             )
 
         st.markdown("### 最新文章")
-        for _, row in articles.head(40).iterrows():
-            title = html.escape(str(row.get("title", "")))
-            title_zh = html.escape(str(row.get("title_zh", "")))
-            url = str(row.get("url", ""))
-            domain = html.escape(str(row.get("domain", "")))
-            time_utc = row.get("time_utc", "")
-            country = html.escape(str(row.get("source_country", "")))
-            lang = html.escape(str(row.get("language", "")))
 
-            if url.startswith("http"):
-                st.markdown(f"**English：[{title}]({url})**")
-            else:
-                st.markdown(f"**English：{title}**")
+        if display_mode == "手機卡片":
+            for _, row in articles.head(40).iterrows():
+                title = html.escape(str(row.get("title", "")))
+                title_zh = html.escape(str(row.get("title_zh", "")))
+                url = str(row.get("url", ""))
+                url_safe = html.escape(url, quote=True)
+                domain = html.escape(str(row.get("domain", "")))
+                time_utc = html.escape(str(row.get("time_utc", "")))
+                country = html.escape(str(row.get("source_country", "")))
+                lang = html.escape(str(row.get("language", "")))
 
-            if title_zh:
-                st.markdown(f"**中文：** {title_zh}")
-            else:
-                st.markdown("**中文：** 暫無翻譯或翻譯服務暫時不可用")
+                title_html = title
+                if url.startswith("http"):
+                    title_html = f"<a href='{url_safe}' target='_blank'>{title}</a>"
 
-            st.caption(f"{time_utc}｜{domain}｜{country}｜{lang}")
-            st.divider()
+                zh_html = title_zh if title_zh else "暫無翻譯或翻譯服務暫時不可用"
 
-        st.markdown("### 表格")
-        table_cols = ["time_utc", "title", "title_zh", "domain", "source_country", "language", "url"]
-        st.dataframe(
-            articles[[c for c in table_cols if c in articles.columns]],
-            use_container_width=True
-        )
+                st.markdown(
+                    f"""
+                    <div class="article-card">
+                        <div class="article-original">原文：{title_html}</div>
+                        <div class="article-zh">中文：{zh_html}</div>
+                        <div class="article-meta">{time_utc}<br>{domain}｜{country}｜{lang}</div>
+                        <div class="article-source"><a href="{url_safe}" target="_blank">打開原文來源</a></div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+        else:
+            table_cols = ["time_utc", "title", "title_zh", "domain", "source_country", "language", "url"]
+            st.dataframe(
+                articles[[c for c in table_cols if c in articles.columns]],
+                use_container_width=True
+            )
+
+        with st.expander("查看完整表格"):
+            table_cols = ["time_utc", "title", "title_zh", "domain", "source_country", "language", "url"]
+            st.dataframe(
+                articles[[c for c in table_cols if c in articles.columns]],
+                use_container_width=True
+            )
 
 
 with tab_company_map:
