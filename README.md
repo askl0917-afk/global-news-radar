@@ -1,31 +1,24 @@
-# Global News Radar V8
+# Global News Radar V9
 
-V8 unifies company / financial news and GDELT global event data.
+V9 improves the map opening experience.
 
 ## What changed
 
-- One unified search.
-- One unified news feed.
-- One unified map.
-- Company / financial news from GDELT DOC API.
-- Global event data from GDELT Event Database.
-- Optional preferred financial-source mode:
-  - Reuters
-  - CNBC
-  - MarketWatch
-  - Yahoo Finance
-  - Bloomberg
-  - WSJ
-  - Financial Times
-  - Barron's
-- Keeps original headlines and auto-translates into Traditional Chinese.
-- Mobile card layout and desktop table layout.
+- Unified map now defaults to a world overview map.
+- The initial map view stays as a global world map.
+- Markers display visible counts directly on the map.
+  - Purple badge: company / financial news count by source country.
+  - Blue badge: global event count.
+  - Red badge: negative / risk event count.
+- Added map mode:
+  - World overview: count badges
+  - Detailed map: cluster / zoom mode
+- Keeps unified news feed, preferred finance sources, translation, mobile cards, and desktop table.
 
 ## Important notes
 
-- Preferred financial source mode still uses GDELT's index. It does not scrape Reuters or paid websites directly.
-- The article map uses source country, not exact event location.
-- The event map uses GDELT Event Database coordinates.
+- Company / financial news map still uses `source_country`, which means news source country, not exact event location.
+- Global events use GDELT Event Database coordinates.
 
 ## Deploy on Streamlit Community Cloud
 

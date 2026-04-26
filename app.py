@@ -17,7 +17,7 @@ from streamlit_folium import st_folium
 
 
 # ------------------------------------------------------------
-# Global News Radar V8
+# Global News Radar V9
 # Unified Feed:
 # - GDELT DOC API: company / financial / general article search
 # - GDELT Event Database: geopolitical / social / event database
@@ -235,7 +235,7 @@ def gdelt_doc_request(query: str, timespan: str, max_records: int) -> pd.DataFra
         "timespan": timespan,
     }
 
-    headers = {"User-Agent": "GlobalNewsRadarV8/1.0"}
+    headers = {"User-Agent": "GlobalNewsRadarV9/1.0"}
 
     try:
         r = requests.get(GDELT_DOC_API, params=params, headers=headers, timeout=30)
@@ -421,6 +421,136 @@ def marker_color_for_event(row) -> str:
     return "blue"
 
 
+def count_badge_html(count: int, badge_type: str = "news") -> str:
+    cls = "map-badge-news"
+    if badge_type == "event":
+        cls = "map-badge-event"
+    elif badge_type == "risk":
+        cls = "map-badge-risk"
+    return f'<div class="map-badge {cls}">{count}</div>'
+
+
+def build_world_overview_map(articles: pd.DataFrame, events: pd.DataFrame, show_articles=True, show_events=True):
+    """World overview map with count badges.
+
+    This map intentionally starts from a full-world view instead of fitting to one region.
+    """
+    m = folium.Map(
+        location=[20, 0],
+        zoom_start=2,
+        min_zoom=2,
+        tiles="CartoDB positron",
+        world_copy_jump=True,
+        prefer_canvas=True,
+        control_scale=True,
+        max_bounds=True,
+    )
+
+    if show_articles and articles is not None and not articles.empty and "source_country" in articles.columns:
+        article_layer = folium.FeatureGroup(name="公司/財經新聞數量", show=True).add_to(m)
+
+        for country, group in articles.groupby("source_country", dropna=True):
+            country_name = str(country).strip()
+            if not country_name:
+                continue
+
+            coords = COUNTRY_COORDS.get(country_name) or COUNTRY_COORDS.get(country_name.title())
+            if not coords:
+                continue
+
+            items_html = []
+            for _, row in group.head(8).iterrows():
+                title = html.escape(str(row.get("title", "")))
+                title_zh = html.escape(str(row.get("title_zh", "")))
+                url = str(row.get("url", ""))
+                domain = html.escape(str(row.get("domain", "")))
+                q = html.escape(str(row.get("source_quality", "")))
+
+                headline = title_zh or title
+                line = f"<b>{headline}</b><br><small>原文：{title}</small><br><small>{domain}｜{q}</small>"
+                if url.startswith("http"):
+                    line = f"<a href='{html.escape(url)}' target='_blank'>{line}</a>"
+                items_html.append(f"<li>{line}</li>")
+
+            popup_html = f"""
+            <div style="width:370px; font-size:13px;">
+                <b>公司/財經新聞｜{html.escape(country_name)}</b><br>
+                新聞數量：{len(group)}<br>
+                <small>定位方式：新聞來源國家，不等同事件真實發生地。</small>
+                <ol>{''.join(items_html)}</ol>
+            </div>
+            """
+
+            folium.Marker(
+                location=list(coords),
+                popup=folium.Popup(popup_html, max_width=430),
+                tooltip=f"公司/財經新聞｜{country_name}｜{len(group)} 篇",
+                icon=folium.DivIcon(
+                    html=count_badge_html(len(group), "news"),
+                    icon_size=(34, 34),
+                    icon_anchor=(17, 17),
+                ),
+            ).add_to(article_layer)
+
+    if show_events and events is not None and not events.empty:
+        event_layer = folium.FeatureGroup(name="全球事件數量", show=True).add_to(m)
+        event_df = events.copy()
+        event_df = event_df.dropna(subset=["ActionGeo_Lat", "ActionGeo_Long"])
+
+        if not event_df.empty:
+            event_df["lat_round"] = pd.to_numeric(event_df["ActionGeo_Lat"], errors="coerce").round(1)
+            event_df["lon_round"] = pd.to_numeric(event_df["ActionGeo_Long"], errors="coerce").round(1)
+            event_df["place_key"] = (
+                event_df["where"].fillna("未知地點")
+                + "|"
+                + event_df["lat_round"].astype(str)
+                + "|"
+                + event_df["lon_round"].astype(str)
+            )
+
+            for _, group in event_df.groupby("place_key"):
+                first = group.iloc[0]
+                lat = float(first["lat_round"])
+                lon = float(first["lon_round"])
+                place = str(first.get("where", "未知地點"))
+
+                min_goldstein = pd.to_numeric(group["GoldsteinScale"], errors="coerce").min()
+                badge_type = "risk" if pd.notna(min_goldstein) and min_goldstein < 0 else "event"
+
+                items_html = []
+                for _, row in group.head(8).iterrows():
+                    source = str(row.get("source", ""))
+                    title = html.escape(str(row.get("what", "")))
+                    who = html.escape(str(row.get("who", "")))
+                    time_utc = html.escape(str(row.get("event_time_utc", "")))
+                    line = f"<b>{title}</b><br><small>{who}</small><br><small>{time_utc}</small>"
+                    if source.startswith("http"):
+                        line = f"<a href='{html.escape(source)}' target='_blank'>{line}</a>"
+                    items_html.append(f"<li>{line}</li>")
+
+                popup_html = f"""
+                <div style="width:360px; font-size:13px;">
+                    <b>全球事件｜{html.escape(place)}</b><br>
+                    事件數量：{len(group)}<br>
+                    <ol>{''.join(items_html)}</ol>
+                </div>
+                """
+
+                folium.Marker(
+                    location=[lat, lon],
+                    popup=folium.Popup(popup_html, max_width=420),
+                    tooltip=f"全球事件｜{place}｜{len(group)} 件",
+                    icon=folium.DivIcon(
+                        html=count_badge_html(len(group), badge_type),
+                        icon_size=(34, 34),
+                        icon_anchor=(17, 17),
+                    ),
+                ).add_to(event_layer)
+
+    folium.LayerControl(collapsed=False).add_to(m)
+    return m
+
+
 def build_unified_map(articles: pd.DataFrame, events: pd.DataFrame, show_articles=True, show_events=True):
     m = folium.Map(
         location=[25, 0],
@@ -555,7 +685,7 @@ def build_relationship_graph(feed: pd.DataFrame) -> str:
     return html_path
 
 
-st.set_page_config(page_title="Global News Radar V8", layout="wide")
+st.set_page_config(page_title="Global News Radar V9", layout="wide")
 
 st.markdown("""
 <style>
@@ -603,6 +733,21 @@ div[data-testid="stDecoration"] { display: none !important; }
     font-size: 0.9rem;
     margin-top: 8px;
 }
+.map-badge {
+    min-width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    color: white;
+    font-weight: 800;
+    font-size: 14px;
+    line-height: 34px;
+    text-align: center;
+    border: 2px solid white;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.35);
+}
+.map-badge-news { background: #7b2cbf; }
+.map-badge-event { background: #1976d2; }
+.map-badge-risk { background: #d62828; }
 @media (max-width: 768px) {
     h1 {
         font-size: 2.15rem !important;
@@ -622,7 +767,7 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V8：統合新聞流 + 統合地圖")
+st.title("🌍 Global News Radar V9：統合新聞流 + 統合地圖")
 
 with st.sidebar:
     st.header("統合搜尋")
@@ -664,6 +809,8 @@ with st.sidebar:
     display_mode = st.radio("閱讀版型", ["手機卡片", "電腦表格"], index=0)
     map_show_articles = st.checkbox("地圖顯示公司/財經新聞", value=True)
     map_show_events = st.checkbox("地圖顯示全球事件", value=True)
+    map_mode = st.radio("地圖模式", ["世界總覽：數量標記", "詳細地圖：可分群縮放"], index=0)
+    st.caption("V9：世界總覽模式固定從全球視角開始，標記直接顯示新聞/事件數量。")
 
     search_button = st.button("更新統合新聞流", type="primary")
 
@@ -752,13 +899,21 @@ with tab_feed:
 
 with tab_map:
     st.subheader("統合地圖")
-    st.caption("紫色：公司/財經新聞來源國家。藍/橘/紅/綠：全球事件地點。公司新聞目前仍以 source_country 定位，不等於事件真實發生地。")
-    unified_map = build_unified_map(
-        articles=articles,
-        events=events_filtered,
-        show_articles=map_show_articles,
-        show_events=map_show_events,
-    )
+    st.caption("世界總覽模式會固定以世界大地圖開場，標記上直接顯示數量。紫色：公司/財經新聞；藍色：全球事件；紅色：偏負面/風險事件。")
+    if map_mode == "世界總覽：數量標記":
+        unified_map = build_world_overview_map(
+            articles=articles,
+            events=events_filtered,
+            show_articles=map_show_articles,
+            show_events=map_show_events,
+        )
+    else:
+        unified_map = build_unified_map(
+            articles=articles,
+            events=events_filtered,
+            show_articles=map_show_articles,
+            show_events=map_show_events,
+        )
     st_folium(unified_map, width=None, height=680, returned_objects=[], key="unified_map")
 
 with tab_graph:
