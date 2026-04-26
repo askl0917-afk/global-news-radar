@@ -19,7 +19,7 @@ from streamlit_folium import st_folium
 
 
 # ============================================================
-# Global News Radar V15
+# Global News Radar V16
 # 投資情報雷達穩定版
 #
 # What changed:
@@ -225,6 +225,53 @@ def infer_ticker(query: str) -> str:
         if key in q:
             return ticker
     return ""
+
+
+def parse_search_terms(query: str):
+    """Parse search terms for AND / OR modes.
+
+    Smart but simple:
+    - "NVIDIA, Intel" => ["NVIDIA", "Intel"]
+    - "NVIDIA OR Intel" => ["NVIDIA", "Intel"]
+    - "NVIDIA | Intel" => ["NVIDIA", "Intel"]
+    - "NVIDIA intel" => ["NVIDIA", "intel"]
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+
+    if "," in q:
+        terms = [x.strip() for x in q.split(",") if x.strip()]
+    elif "|" in q:
+        terms = [x.strip() for x in q.split("|") if x.strip()]
+    elif re.search(r"\s+OR\s+", q, flags=re.IGNORECASE):
+        terms = [x.strip() for x in re.split(r"\s+OR\s+", q, flags=re.IGNORECASE) if x.strip()]
+    else:
+        terms = [x.strip() for x in q.split() if x.strip()]
+
+    # Keep order but remove duplicates case-insensitively.
+    seen = set()
+    out = []
+    for t in terms:
+        key = t.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(t)
+    return out
+
+
+def build_query_by_logic(query: str, query_logic: str) -> list:
+    terms = parse_search_terms(query)
+    if not terms:
+        return []
+
+    if query_logic == "聯集 OR":
+        return terms
+
+    # Intersection mode: search all terms together.
+    # Google News treats space-separated terms as an AND-like query most of the time.
+    return [" ".join(terms)]
+
 
 
 def wrapped_longitudes(lon):
@@ -466,33 +513,63 @@ def enrich_articles(df: pd.DataFrame, translate_titles: bool) -> pd.DataFrame:
 
     df["importance"] = df.apply(importance_score, axis=1)
 
-    # Sort: source quality / importance / time
+    # Sort: importance first, then source quality, then recency.
     quality_order = {"A": 0, "B": 1, "C": 2, "D": 3}
     importance_order = {"A": 0, "B": 1, "C": 2, "D": 3}
-    df["_q"] = df["source_quality"].str[0].map(quality_order).fillna(9)
     df["_i"] = df["importance"].map(importance_order).fillna(9)
+    df["_q"] = df["source_quality"].str[0].map(quality_order).fillna(9)
     df["time_utc"] = pd.to_datetime(df["time_utc"], errors="coerce", utc=True)
-    df = df.sort_values(["_q", "_i", "time_utc"], ascending=[True, True, False]).drop(columns=["_q", "_i"])
+    df = df.sort_values(["_i", "_q", "time_utc"], ascending=[True, True, False]).drop(columns=["_i", "_q"])
     return df
 
 
-def search_finance_news(query: str, max_items: int, translate_titles: bool, use_google: bool, use_yahoo: bool, preferred_domains) -> pd.DataFrame:
+def search_finance_news(
+    query: str,
+    max_items: int,
+    translate_titles: bool,
+    use_google: bool,
+    use_yahoo: bool,
+    preferred_domains,
+    query_logic: str = "交集 AND",
+) -> pd.DataFrame:
     frames = []
+    query_list = build_query_by_logic(query, query_logic)
 
     if use_google:
-        frames.append(fetch_google_news_rss(query, max_items=max_items, preferred_domains=preferred_domains))
+        # In OR mode, search each keyword separately then combine.
+        # In AND mode, search all keywords together.
+        per_query_limit = max(5, int(max_items / max(1, len(query_list))))
+        for q in query_list:
+            frames.append(fetch_google_news_rss(q, max_items=per_query_limit, preferred_domains=preferred_domains))
 
     if use_yahoo:
-        ticker = infer_ticker(query)
-        if ticker:
-            frames.append(fetch_yahoo_finance_rss(ticker, max_items=max_items))
+        # Yahoo Finance RSS is ticker-based.
+        # In OR mode, fetch each ticker separately.
+        # In AND mode, Yahoo cannot express "NVIDIA AND Intel" well, so we only use Google to avoid single-company contamination.
+        if query_logic == "聯集 OR":
+            for term in parse_search_terms(query):
+                ticker = infer_ticker(term)
+                if ticker:
+                    frames.append(fetch_yahoo_finance_rss(ticker, max_items=max(5, int(max_items / max(1, len(query_list))))))
+        else:
+            # If there is only one term, Yahoo ticker RSS is still useful.
+            terms = parse_search_terms(query)
+            if len(terms) == 1:
+                ticker = infer_ticker(query)
+                if ticker:
+                    frames.append(fetch_yahoo_finance_rss(ticker, max_items=max_items))
 
     frames = [f for f in frames if f is not None and not f.empty]
     if not frames:
         return pd.DataFrame()
 
     df = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["title"])
-    return enrich_articles(df, translate_titles=translate_titles)
+    df = enrich_articles(df, translate_titles=translate_titles)
+
+    # Final cap after union/boost searches.
+    if len(df) > max_items:
+        df = df.head(max_items)
+    return df
 
 
 # -------------------------------
@@ -650,7 +727,13 @@ def build_unified_feed(articles: pd.DataFrame, events: pd.DataFrame) -> pd.DataF
 
     df = pd.DataFrame(rows)
     df["time_utc"] = pd.to_datetime(df["time_utc"], errors="coerce", utc=True)
-    return df.sort_values("time_utc", ascending=False)
+
+    importance_order = {"A": 0, "B": 1, "C": 2, "D": 3}
+    quality_order = {"A": 0, "B": 1, "C": 2, "D": 3}
+    df["_i"] = df["importance"].map(importance_order).fillna(9)
+    df["_q"] = df["source_quality"].astype(str).str[0].map(quality_order).fillna(9)
+    df = df.sort_values(["_i", "_q", "time_utc"], ascending=[True, True, False]).drop(columns=["_i", "_q"])
+    return df
 
 
 def build_world_map(feed: pd.DataFrame, show_news=True, show_events=True):
@@ -799,7 +882,7 @@ def build_graph(feed: pd.DataFrame) -> str:
 # UI
 # -------------------------------
 
-st.set_page_config(page_title="Global News Radar V15", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Global News Radar V16", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -868,11 +951,12 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V15：投資情報雷達穩定版")
+st.title("🌍 Global News Radar V16：投資情報雷達穩定版")
 
 with st.sidebar:
     st.header("搜尋")
     query = st.text_input("關鍵字 / 公司 / 人名", value="NVIDIA")
+    query_logic = st.radio("多關鍵字邏輯", ["交集 AND", "聯集 OR"], index=0, help="例：NVIDIA intel。交集=同時找兩者相關；聯集=分別找 NVIDIA 與 Intel 後合併。")
     max_items = st.slider("最多新聞篇數", 5, 50, 20, step=5)
     translate_titles = st.checkbox("原文標題 + 智慧翻譯成繁中", value=True)
 
@@ -930,6 +1014,7 @@ if search_button:
             use_google=use_google,
             use_yahoo=use_yahoo,
             preferred_domains=preferred_domains,
+            query_logic=query_logic,
         )
 
         if not articles.empty:
@@ -961,7 +1046,7 @@ tab_feed, tab_map, tab_graph, tab_raw = st.tabs(["統合新聞流", "統合地�
 
 with tab_feed:
     st.subheader("統合新聞流")
-    st.caption("V15：財經新聞優先顯示可讀標題與點擊判斷；GDELT 事件預設關閉，只作背景補充。")
+    st.caption("V16：可選交集 / 聯集搜尋，並依重要性 A→B→C→D 優先排序。")
 
     if feed.empty:
         st.info("尚未查到資料。請打開側欄設定關鍵字後按「更新統合新聞流」。")

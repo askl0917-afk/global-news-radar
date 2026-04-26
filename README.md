@@ -1,23 +1,21 @@
-# Global News Radar V15
+# Global News Radar V16
 
-V15 improves readability and removes noisy GDELT event cards from default finance searches.
+V16 adds explicit multi-keyword search logic and importance-first sorting.
 
 ## What changed
 
-- GDELT global events are off by default.
-- GDELT events must directly match the search keyword before entering the unified feed.
-- GDELT event cards are rendered as structured event summaries, not fake translated headlines.
-- Each finance news card adds a plain Chinese click hint:
-  - Worth reading
-  - Track only
-  - Low priority
-- Company / financial news remains based on Google News RSS and Yahoo Finance RSS.
-- GDELT remains only as a background geopolitical/event supplement.
-
-## Why
-
-GDELT Event Database is useful for global event context, but its machine-coded event strings are not readable finance headlines.
-V15 keeps the investment-radar workflow focused on readable finance news first.
+- New search logic selector:
+  - 交集 AND: search all terms together, e.g. `NVIDIA intel` means NVIDIA + Intel related articles.
+  - 聯集 OR: search each term separately and merge results.
+- Yahoo Finance RSS behavior:
+  - AND mode: only used for single ticker queries to avoid contamination.
+  - OR mode: fetches each inferred ticker separately, e.g. NVIDIA -> NVDA, Intel -> INTC.
+- Results now sort by importance first:
+  - A first
+  - then B
+  - then C
+  - then D
+- Within the same importance grade, results sort by source quality and recency.
 
 ## Deploy on Streamlit Community Cloud
 
