@@ -1,21 +1,31 @@
-# Global News Radar V7
+# Global News Radar V8
 
-V7 improves the mobile map experience.
+V8 unifies company / financial news and GDELT global event data.
 
 ## What changed
 
-- Prevents Streamlit reruns when dragging / zooming the Folium maps.
-  - This should reduce the annoying dim / bright flicker.
-- Enables Leaflet `worldCopyJump` to handle panning across the international date line.
-  - This helps when starting near Taiwan and sliding toward the United States.
-- Company News Map fits bounds to the available source-country markers.
-- Keeps original headline and Traditional Chinese translation.
-- Keeps mobile card view and desktop table view.
+- One unified search.
+- One unified news feed.
+- One unified map.
+- Company / financial news from GDELT DOC API.
+- Global event data from GDELT Event Database.
+- Optional preferred financial-source mode:
+  - Reuters
+  - CNBC
+  - MarketWatch
+  - Yahoo Finance
+  - Bloomberg
+  - WSJ
+  - Financial Times
+  - Barron's
+- Keeps original headlines and auto-translates into Traditional Chinese.
+- Mobile card layout and desktop table layout.
 
-## Important note about the company-news map
+## Important notes
 
-The map uses `source_country` from GDELT DOC API.
-That means it shows the news source country, not necessarily the exact event location.
+- Preferred financial source mode still uses GDELT's index. It does not scrape Reuters or paid websites directly.
+- The article map uses source country, not exact event location.
+- The event map uses GDELT Event Database coordinates.
 
 ## Deploy on Streamlit Community Cloud
 

@@ -1,8 +1,9 @@
+
 import io
 import html
-import time
 import zipfile
 from urllib.parse import urlparse
+from datetime import datetime
 
 import folium
 import networkx as nx
@@ -14,13 +15,32 @@ from folium.plugins import MarkerCluster
 from pyvis.network import Network
 from streamlit_folium import st_folium
 
+
+# ------------------------------------------------------------
+# Global News Radar V8
+# Unified Feed:
+# - GDELT DOC API: company / financial / general article search
+# - GDELT Event Database: geopolitical / social / event database
+# - Unified feed + unified map
+# ------------------------------------------------------------
+
 MASTER_FILE_LIST = "http://data.gdeltproject.org/gdeltv2/masterfilelist.txt"
 GDELT_DOC_API = "https://api.gdeltproject.org/api/v2/doc/doc"
 
-MYMEMORY_TRANSLATE_API = "https://api.mymemory.translated.net/get"
+PREFERRED_FINANCE_DOMAINS = [
+    "reuters.com",
+    "cnbc.com",
+    "marketwatch.com",
+    "finance.yahoo.com",
+    "fool.com",
+    "barrons.com",
+    "bloomberg.com",
+    "wsj.com",
+    "ft.com",
+    "investing.com",
+    "seekingalpha.com",
+]
 
-# Approximate country centroids for company-news source-country map.
-# Note: this maps where the news source is based, not necessarily where the event happened.
 COUNTRY_COORDS = {
     "United States": (39.8283, -98.5795), "US": (39.8283, -98.5795), "USA": (39.8283, -98.5795),
     "Taiwan": (23.6978, 120.9605), "China": (35.8617, 104.1954), "Hong Kong": (22.3193, 114.1694),
@@ -29,7 +49,7 @@ COUNTRY_COORDS = {
     "Germany": (51.1657, 10.4515), "France": (46.2276, 2.2137), "Netherlands": (52.1326, 5.2913),
     "Canada": (56.1304, -106.3468), "Australia": (-25.2744, 133.7751), "India": (20.5937, 78.9629),
     "Singapore": (1.3521, 103.8198), "Israel": (31.0461, 34.8516), "Russia": (61.5240, 105.3188),
-    "Ukraine": (48.3794, 31.1656), "Italy": (41.8719, 12.5674), "Spain": (40.4637, -3.7492),
+    "Ukraine": (48.3794, 31.1656), "Italy": (41.8719, 12.5679), "Spain": (40.4637, -3.7492),
     "Switzerland": (46.8182, 8.2275), "Ireland": (53.1424, -7.6921), "Sweden": (60.1282, 18.6435),
     "Norway": (60.4720, 8.4689), "Denmark": (56.2639, 9.5018), "Finland": (61.9241, 25.7482),
     "Belgium": (50.5039, 4.4699), "Austria": (47.5162, 14.5501), "Poland": (51.9194, 19.1451),
@@ -90,6 +110,40 @@ def safe_text(value, fallback="未知"):
     if pd.isna(value) or str(value).strip() == "":
         return fallback
     return str(value).strip()
+
+
+def source_quality(domain: str) -> str:
+    d = (domain or "").lower()
+    if "reuters.com" in d:
+        return "A+ Reuters"
+    if any(x in d for x in ["bloomberg.com", "wsj.com", "ft.com", "barrons.com"]):
+        return "A 財經專業媒體"
+    if any(x in d for x in ["cnbc.com", "marketwatch.com", "finance.yahoo.com", "investing.com"]):
+        return "B 主流財經媒體"
+    if any(x in d for x in ["fool.com", "seekingalpha.com"]):
+        return "C 投資觀點媒體"
+    return "D 其他來源"
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def translate_title_to_zh_tw(title: str, source_language: str = "") -> str:
+    title = (title or "").strip()
+    source_language = (source_language or "").strip().lower()
+
+    if not title:
+        return ""
+
+    if "chinese" in source_language or source_language in {"zh", "zh-cn", "zh-tw"}:
+        return title
+
+    try:
+        translated = GoogleTranslator(source="auto", target="zh-TW").translate(title[:450])
+        translated = html.unescape(str(translated)).strip()
+        if not translated or translated.lower() == title.lower():
+            return ""
+        return translated
+    except Exception:
+        return ""
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -153,7 +207,6 @@ def load_latest_events(num_files: int = 4, max_rows_per_file: int = 20000) -> pd
         df["ActionGeo_Lat"].between(-90, 90)
         & df["ActionGeo_Long"].between(-180, 180)
     ]
-
     df = df[df["IsRootEvent"].fillna("") == "1"]
 
     df["actor1"] = df["Actor1Name"].apply(lambda x: safe_text(x, "未知角色A"))
@@ -172,50 +225,7 @@ def load_latest_events(num_files: int = 4, max_rows_per_file: int = 20000) -> pd
     return df.sort_values("event_time_utc", ascending=False)
 
 
-
-@st.cache_data(ttl=86400, show_spinner=False)
-def translate_title_to_zh_tw(title: str, source_language: str = "") -> str:
-    """Translate a headline from any detected language into Traditional Chinese.
-
-    Smart approach:
-    - Use GoogleTranslator with source='auto', so we don't maintain 100 language pairs.
-    - If GDELT already says the article is Chinese, keep the original headline.
-    - Fail softly if the free translation service is temporarily unavailable.
-    """
-    title = (title or "").strip()
-    source_language = (source_language or "").strip().lower()
-
-    if not title:
-        return ""
-
-    # If the title is already Chinese, keep it as the Chinese version.
-    if "chinese" in source_language or source_language in {"zh", "zh-cn", "zh-tw"}:
-        return title
-
-    try:
-        translated = GoogleTranslator(source="auto", target="zh-TW").translate(title[:450])
-        translated = html.unescape(str(translated)).strip()
-
-        if not translated or translated.lower() == title.lower():
-            return ""
-        return translated
-    except Exception:
-        return ""
-
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def search_company_news_cached(query: str, timespan: str = "24h", max_records: int = 30, translate_titles: bool = True) -> pd.DataFrame:
-    """Search GDELT DOC API defensively.
-
-    V4 changes:
-    - Does not assume GDELT always returns JSON.
-    - Handles 429 / empty / HTML responses gracefully.
-    - Uses fewer default records to reduce API throttling risk.
-    """
-    query = (query or "").strip()
-    if not query:
-        return pd.DataFrame()
-
+def gdelt_doc_request(query: str, timespan: str, max_records: int) -> pd.DataFrame:
     params = {
         "query": query,
         "mode": "ArtList",
@@ -225,15 +235,13 @@ def search_company_news_cached(query: str, timespan: str = "24h", max_records: i
         "timespan": timespan,
     }
 
-    headers = {
-        "User-Agent": "GlobalNewsRadarV7/1.0"
-    }
+    headers = {"User-Agent": "GlobalNewsRadarV8/1.0"}
 
     try:
         r = requests.get(GDELT_DOC_API, params=params, headers=headers, timeout=30)
 
         if r.status_code == 429:
-            st.warning("GDELT DOC API 暫時限流 429。請等 5～10 分鐘再查，或改用單一關鍵字，例如 NVIDIA。")
+            st.warning("GDELT DOC API 暫時限流 429。請等 5～10 分鐘再查，或降低篇數。")
             return pd.DataFrame()
 
         if r.status_code != 200:
@@ -242,14 +250,14 @@ def search_company_news_cached(query: str, timespan: str = "24h", max_records: i
 
         text = (r.text or "").strip()
         if not text:
-            st.warning("GDELT DOC API 回傳空白內容。請稍後再試，或把時間範圍改成 3d / 7d。")
+            st.warning("GDELT DOC API 回傳空白內容。請稍後再試。")
             return pd.DataFrame()
 
         try:
             data = r.json()
         except Exception:
             preview = text[:180].replace("\n", " ")
-            st.warning(f"GDELT DOC API 回傳不是 JSON，可能是暫時限流或服務頁面。回傳開頭：{preview}")
+            st.warning(f"GDELT DOC API 回傳不是 JSON。回傳開頭：{preview}")
             return pd.DataFrame()
 
     except Exception as exc:
@@ -270,133 +278,234 @@ def search_company_news_cached(query: str, timespan: str = "24h", max_records: i
             "language": a.get("language", ""),
             "url": url,
             "image": a.get("socialimage", ""),
+            "source_query": query,
         })
 
     df = pd.DataFrame(rows)
     if not df.empty:
         df["time_utc"] = pd.to_datetime(df["time_utc"], errors="coerce", utc=True)
-        df = df.drop_duplicates(subset=["url"]).sort_values("time_utc", ascending=False)
-
-        if translate_titles:
-            df["title_zh"] = df.apply(lambda row: translate_title_to_zh_tw(row.get("title", ""), row.get("language", "")), axis=1)
-        else:
-            df["title_zh"] = ""
-
+        df = df.drop_duplicates(subset=["url"])
     return df
 
-def event_popup(row) -> str:
-    source = safe_text(row.get("source"), "")
-    source_html = (
-        f'<a href="{html.escape(source)}" target="_blank">來源連結</a>'
-        if source.startswith("http") else "無來源連結"
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def search_article_news(
+    query: str,
+    timespan: str = "24h",
+    max_records: int = 30,
+    translate_titles: bool = True,
+    preferred_mode: bool = True,
+    preferred_domains: tuple = (),
+    per_domain_records: int = 5,
+) -> pd.DataFrame:
+    query = (query or "").strip()
+    if not query:
+        return pd.DataFrame()
+
+    frames = []
+
+    # Broad GDELT query
+    frames.append(gdelt_doc_request(query=query, timespan=timespan, max_records=max_records))
+
+    # Domain-enhanced queries for Reuters / major financial sites.
+    # This still uses GDELT's index; it does not scrape Reuters directly.
+    if preferred_mode and preferred_domains:
+        for domain in preferred_domains:
+            domain_q = f'{query} domain:{domain}'
+            frames.append(gdelt_doc_request(query=domain_q, timespan=timespan, max_records=per_domain_records))
+
+    frames = [f for f in frames if f is not None and not f.empty]
+    if not frames:
+        return pd.DataFrame()
+
+    df = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["url"])
+    df["source_quality"] = df["domain"].apply(source_quality)
+    df["data_type"] = "新聞文章"
+    df["display_location"] = df["source_country"].fillna("")
+    df["lat"] = df["source_country"].apply(lambda c: COUNTRY_COORDS.get(str(c).strip(), (None, None))[0])
+    df["lon"] = df["source_country"].apply(lambda c: COUNTRY_COORDS.get(str(c).strip(), (None, None))[1])
+
+    if translate_titles:
+        df["title_zh"] = df.apply(
+            lambda row: translate_title_to_zh_tw(row.get("title", ""), row.get("language", "")),
+            axis=1
+        )
+    else:
+        df["title_zh"] = ""
+
+    return df.sort_values(["source_quality", "time_utc"], ascending=[True, False])
+
+
+def filter_events(events: pd.DataFrame, keyword: str, root_filter, country_filter: str, min_mentions: int, max_events: int) -> pd.DataFrame:
+    if events is None or events.empty:
+        return pd.DataFrame()
+
+    df = events.copy()
+
+    if root_filter:
+        df = df[df["root_label"].isin(root_filter)]
+
+    if country_filter.strip():
+        q = country_filter.strip().lower()
+        df = df[df["where"].str.lower().str.contains(q, na=False)]
+
+    if keyword.strip():
+        q = keyword.strip().lower()
+        df = df[
+            df["actor1"].str.lower().str.contains(q, na=False)
+            | df["actor2"].str.lower().str.contains(q, na=False)
+            | df["source"].str.lower().str.contains(q, na=False)
+            | df["where"].str.lower().str.contains(q, na=False)
+            | df["what"].str.lower().str.contains(q, na=False)
+        ]
+
+    df = df[df["NumMentions"].fillna(0) >= min_mentions]
+    return df.head(max_events)
+
+
+def build_unified_feed(articles: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
+    article_rows = []
+    if articles is not None and not articles.empty:
+        for _, r in articles.iterrows():
+            article_rows.append({
+                "time_utc": r.get("time_utc"),
+                "data_type": "公司/財經新聞",
+                "title": r.get("title", ""),
+                "title_zh": r.get("title_zh", ""),
+                "domain": r.get("domain", ""),
+                "source_quality": r.get("source_quality", ""),
+                "location": r.get("source_country", ""),
+                "language": r.get("language", ""),
+                "url": r.get("url", ""),
+                "lat": r.get("lat"),
+                "lon": r.get("lon"),
+                "summary": "",
+            })
+
+    event_rows = []
+    if events is not None and not events.empty:
+        for _, r in events.iterrows():
+            event_title = f"{r.get('who', '')}｜{r.get('where', '')}｜{r.get('what', '')}"
+            event_rows.append({
+                "time_utc": r.get("event_time_utc"),
+                "data_type": "全球事件",
+                "title": event_title,
+                "title_zh": event_title,
+                "domain": urlparse(str(r.get("source", ""))).netloc,
+                "source_quality": "GDELT Event",
+                "location": r.get("where", ""),
+                "language": "",
+                "url": r.get("source", ""),
+                "lat": r.get("ActionGeo_Lat"),
+                "lon": r.get("ActionGeo_Long"),
+                "summary": f"mentions={r.get('NumMentions', '')}, tone={r.get('AvgTone', '')}, Goldstein={r.get('GoldsteinScale', '')}",
+            })
+
+    rows = article_rows + event_rows
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    df["time_utc"] = pd.to_datetime(df["time_utc"], errors="coerce", utc=True)
+    return df.sort_values("time_utc", ascending=False)
+
+
+def marker_color_for_event(row) -> str:
+    goldstein = row.get("GoldsteinScale")
+    if pd.notna(goldstein) and goldstein <= -5:
+        return "red"
+    elif pd.notna(goldstein) and goldstein < 0:
+        return "orange"
+    elif pd.notna(goldstein) and goldstein > 3:
+        return "green"
+    return "blue"
+
+
+def build_unified_map(articles: pd.DataFrame, events: pd.DataFrame, show_articles=True, show_events=True):
+    m = folium.Map(
+        location=[25, 0],
+        zoom_start=2,
+        tiles="CartoDB positron",
+        world_copy_jump=True,
+        prefer_canvas=True,
     )
-    return f"""
-    <div style="width:330px; font-size:13px;">
-        <b>誰：</b>{html.escape(row.get("who", "未知"))}<br>
-        <b>何時：</b>{row.get("event_time_utc")}<br>
-        <b>何地：</b>{html.escape(row.get("where", "未知"))}<br>
-        <b>何事：</b>{html.escape(row.get("what", "未知"))}<br>
-        <b>聲量：</b>mentions={row.get("NumMentions", "")}, articles={row.get("NumArticles", "")}<br>
-        <b>情緒：</b>AvgTone={row.get("AvgTone", "")}, Goldstein={row.get("GoldsteinScale", "")}<br>
-        {source_html}
-    </div>
-    """
 
-
-def build_map(df: pd.DataFrame):
-    m = folium.Map(location=[20, 0], zoom_start=2, tiles="CartoDB positron", world_copy_jump=True, prefer_canvas=True)
-    cluster = MarkerCluster(name="全球事件").add_to(m)
-
-    for _, row in df.iterrows():
-        lat = row["ActionGeo_Lat"]
-        lon = row["ActionGeo_Long"]
-
-        goldstein = row.get("GoldsteinScale")
-        if pd.notna(goldstein) and goldstein <= -5:
-            color = "red"
-        elif pd.notna(goldstein) and goldstein < 0:
-            color = "orange"
-        elif pd.notna(goldstein) and goldstein > 3:
-            color = "green"
-        else:
-            color = "blue"
-
-        folium.Marker(
-            location=[lat, lon],
-            popup=folium.Popup(event_popup(row), max_width=380),
-            tooltip=f"{safe_text(row.get('where'))}｜{safe_text(row.get('root_label'))}",
-            icon=folium.Icon(color=color, icon="info-sign")
-        ).add_to(cluster)
-
-    folium.LayerControl().add_to(m)
-    return m
-
-
-def build_company_news_map(articles: pd.DataFrame):
-    """Map company-news articles by source country.
-
-    Important: GDELT DOC article list does not provide precise event coordinates.
-    This map uses source_country as a practical first version.
-    """
-    m = folium.Map(location=[25, 0], zoom_start=2, tiles="CartoDB positron", world_copy_jump=True, prefer_canvas=True)
-    cluster = MarkerCluster(name="公司新聞來源國家").add_to(m)
-
-    if articles is None or articles.empty or "source_country" not in articles.columns:
-        return m
-
-    for country, group in articles.groupby("source_country", dropna=True):
-        country_name = str(country).strip()
-        if not country_name:
-            continue
-
-        coords = COUNTRY_COORDS.get(country_name)
-        if coords is None:
-            coords = COUNTRY_COORDS.get(country_name.title())
-        if coords is None:
-            continue
-
-        items_html = []
-        for _, row in group.head(6).iterrows():
-            title = html.escape(str(row.get("title", "")))
-            title_zh = html.escape(str(row.get("title_zh", "")))
-            url = str(row.get("url", ""))
-            time_utc = html.escape(str(row.get("time_utc", "")))
-            domain = html.escape(str(row.get("domain", "")))
-
-            title_part = f"<b>{title}</b>"
-            if title_zh:
-                title_part += f"<br><span style='color:#444;'>中文：{title_zh}</span>"
-
-            if url.startswith("http"):
-                title_part = f"<a href='{html.escape(url)}' target='_blank'>{title_part}</a>"
-
-            items_html.append(f"<li>{title_part}<br><small>{time_utc}｜{domain}</small></li>")
-
-        popup_html = f"""
-        <div style="width:360px; font-size:13px;">
-            <b>{html.escape(country_name)}</b><br>
-            公司新聞篇數：{len(group)}<br>
-            <small>定位方式：新聞來源國家，不等同事件發生地點。</small>
-            <ol>{''.join(items_html)}</ol>
-        </div>
-        """
-
-        folium.Marker(
-            location=list(coords),
-            popup=folium.Popup(popup_html, max_width=420),
-            tooltip=f"{country_name}｜{len(group)} 篇公司新聞",
-            icon=folium.Icon(color="purple", icon="info-sign")
-        ).add_to(cluster)
-
-    folium.LayerControl().add_to(m)
-
-    # V7: fit the map to available company-news source countries.
     coords_list = []
-    for country in articles["source_country"].dropna().unique():
-        country_name = str(country).strip()
-        coords = COUNTRY_COORDS.get(country_name) or COUNTRY_COORDS.get(country_name.title())
-        if coords:
+
+    if show_articles and articles is not None and not articles.empty:
+        article_cluster = MarkerCluster(name="公司/財經新聞").add_to(m)
+
+        for country, group in articles.groupby("source_country", dropna=True):
+            country_name = str(country).strip()
+            if not country_name:
+                continue
+
+            coords = COUNTRY_COORDS.get(country_name) or COUNTRY_COORDS.get(country_name.title())
+            if not coords:
+                continue
+
             coords_list.append(coords)
+
+            items_html = []
+            for _, row in group.head(7).iterrows():
+                title = html.escape(str(row.get("title", "")))
+                title_zh = html.escape(str(row.get("title_zh", "")))
+                url = str(row.get("url", ""))
+                domain = html.escape(str(row.get("domain", "")))
+                q = html.escape(str(row.get("source_quality", "")))
+
+                line = f"<b>{title_zh or title}</b><br><small>原文：{title}</small><br><small>{domain}｜{q}</small>"
+                if url.startswith("http"):
+                    line = f"<a href='{html.escape(url)}' target='_blank'>{line}</a>"
+                items_html.append(f"<li>{line}</li>")
+
+            popup_html = f"""
+            <div style="width:360px; font-size:13px;">
+                <b>{html.escape(country_name)}</b><br>
+                公司/財經新聞：{len(group)} 篇<br>
+                <small>定位方式：新聞來源國家，不等同事件真實發生地。</small>
+                <ol>{''.join(items_html)}</ol>
+            </div>
+            """
+            folium.Marker(
+                location=list(coords),
+                popup=folium.Popup(popup_html, max_width=420),
+                tooltip=f"公司新聞｜{country_name}｜{len(group)} 篇",
+                icon=folium.Icon(color="purple", icon="info-sign"),
+            ).add_to(article_cluster)
+
+    if show_events and events is not None and not events.empty:
+        event_cluster = MarkerCluster(name="全球事件").add_to(m)
+
+        for _, row in events.iterrows():
+            lat = row.get("ActionGeo_Lat")
+            lon = row.get("ActionGeo_Long")
+            if pd.isna(lat) or pd.isna(lon):
+                continue
+
+            coords_list.append((float(lat), float(lon)))
+            source = str(row.get("source", ""))
+            source_html = f'<a href="{html.escape(source)}" target="_blank">來源連結</a>' if source.startswith("http") else "無來源連結"
+
+            popup_html = f"""
+            <div style="width:330px; font-size:13px;">
+                <b>全球事件</b><br>
+                <b>誰：</b>{html.escape(str(row.get("who", "未知")))}<br>
+                <b>何時：</b>{row.get("event_time_utc")}<br>
+                <b>何地：</b>{html.escape(str(row.get("where", "未知")))}<br>
+                <b>何事：</b>{html.escape(str(row.get("what", "未知")))}<br>
+                <b>聲量：</b>mentions={row.get("NumMentions", "")}, articles={row.get("NumArticles", "")}<br>
+                {source_html}
+            </div>
+            """
+            folium.Marker(
+                location=[lat, lon],
+                popup=folium.Popup(popup_html, max_width=380),
+                tooltip=f"事件｜{safe_text(row.get('where'))}｜{safe_text(row.get('root_label'))}",
+                icon=folium.Icon(color=marker_color_for_event(row), icon="info-sign"),
+            ).add_to(event_cluster)
+
+    folium.LayerControl().add_to(m)
 
     if coords_list:
         if len(coords_list) == 1:
@@ -408,226 +517,273 @@ def build_company_news_map(articles: pd.DataFrame):
     return m
 
 
-def build_relationship_graph(df: pd.DataFrame, max_events: int = 80) -> str:
+def build_relationship_graph(feed: pd.DataFrame) -> str:
     g = nx.Graph()
-    sample = df.head(max_events).copy()
 
-    for _, row in sample.iterrows():
-        event_id = f"E:{row['GlobalEventID']}"
-        actor1 = f"A:{row['actor1']}"
-        actor2 = f"A:{row['actor2']}"
-        location = f"L:{row['where']}"
+    if feed is None or feed.empty:
+        html_path = "relationship_graph.html"
+        Network(height="650px", width="100%").save_graph(html_path)
+        return html_path
 
-        event_title = f"{row['what']}<br>{row['event_time_utc']}<br>{row['source']}"
+    sample = feed.head(80).copy()
 
-        g.add_node(event_id, label=f"{row['root_label']}", title=event_title, group="event")
-        g.add_node(actor1, label=row["actor1"], title="Actor 1", group="actor")
-        g.add_node(actor2, label=row["actor2"], title="Actor 2", group="actor")
-        g.add_node(location, label=row["where"], title="Location", group="location")
+    for i, row in sample.iterrows():
+        item_id = f"I:{i}"
+        dtype = str(row.get("data_type", ""))
+        title = str(row.get("title_zh") or row.get("title") or "Untitled")
+        domain = str(row.get("domain", ""))
+        location = str(row.get("location", ""))
+        url = str(row.get("url", ""))
 
-        g.add_edge(actor1, event_id, title="Actor1 involved")
-        g.add_edge(event_id, actor2, title="Actor2 involved")
-        g.add_edge(event_id, location, title="Occurred at")
+        g.add_node(item_id, label=dtype, title=f"{title}<br>{url}", group="item")
+
+        if domain:
+            dnode = f"D:{domain}"
+            g.add_node(dnode, label=domain, title="Source domain", group="domain")
+            g.add_edge(item_id, dnode)
+
+        if location:
+            lnode = f"L:{location}"
+            g.add_node(lnode, label=location, title="Location / source country", group="location")
+            g.add_edge(item_id, lnode)
 
     net = Network(height="650px", width="100%", bgcolor="#ffffff", font_color="#222222")
     net.from_nx(g)
     net.toggle_physics(True)
-
     html_path = "relationship_graph.html"
     net.save_graph(html_path)
     return html_path
 
 
-st.set_page_config(page_title="Global News Radar V7", layout="wide")
-st.title("🌍 Global News Radar V7：全球事件地圖 + 公司新聞搜尋")
+st.set_page_config(page_title="Global News Radar V8", layout="wide")
+
+st.markdown("""
+<style>
+.block-container {
+    padding-top: 1.1rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
+}
+* { transition: none !important; }
+div[data-testid="stStatusWidget"] { visibility: hidden !important; }
+div[data-testid="stDecoration"] { display: none !important; }
+.article-card {
+    border: 1px solid rgba(128,128,128,0.25);
+    border-radius: 14px;
+    padding: 14px 15px;
+    margin: 12px 0 16px 0;
+    background: rgba(128,128,128,0.08);
+}
+.article-type {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: rgba(128,128,128,0.18);
+    font-size: 0.78rem;
+    margin-bottom: 8px;
+}
+.article-original {
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1.4;
+}
+.article-zh {
+    font-size: 1.09rem;
+    font-weight: 750;
+    line-height: 1.52;
+    margin-top: 8px;
+}
+.article-meta {
+    font-size: 0.86rem;
+    line-height: 1.45;
+    opacity: 0.72;
+    margin-top: 9px;
+}
+.article-source {
+    font-size: 0.9rem;
+    margin-top: 8px;
+}
+@media (max-width: 768px) {
+    h1 {
+        font-size: 2.15rem !important;
+        line-height: 1.18 !important;
+        word-break: keep-all;
+    }
+    div[data-testid="stMetricValue"] { font-size: 2.1rem !important; }
+    .article-card { padding: 13px 13px; border-radius: 13px; }
+}
+@media (min-width: 769px) {
+    .block-container {
+        max-width: 1200px;
+        padding-left: 2.2rem;
+        padding-right: 2.2rem;
+    }
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.title("🌍 Global News Radar V8：統合新聞流 + 統合地圖")
 
 with st.sidebar:
-    st.header("A. 全球事件地圖")
-    num_files = st.slider("抓取最近幾個 15 分鐘事件檔", 1, 12, 4)
-    max_rows = st.slider("每個事件檔最多讀取列數", 1000, 50000, 20000, step=1000)
-
-    root_filter = st.multiselect(
-        "事件大類",
-        options=list(ROOT_EVENT_LABELS.values()),
-        default=[]
-    )
-    country_filter = st.text_input("事件地點關鍵字，例如 Taiwan / China / Israel")
-    actor_filter = st.text_input("事件角色關鍵字，例如 Trump / China / Russia")
-    min_mentions = st.slider("事件最低提及次數 NumMentions", 0, 100, 0)
+    st.header("統合搜尋")
+    query = st.text_input("關鍵字 / 公司 / 人名", value="NVIDIA")
+    timespan = st.selectbox("新聞時間範圍", options=["1h", "6h", "12h", "24h", "3d", "7d"], index=2)
+    article_records = st.slider("一般新聞篇數", 5, 100, 20, step=5)
+    translate_titles = st.checkbox("原文標題 + 智慧翻譯成繁中", value=True)
 
     st.divider()
-    st.header("B. 公司 / 財經新聞搜尋")
-    company_query = st.text_input(
-        "新聞關鍵字",
-        value="NVIDIA",
-        help="V5 建議先用單一關鍵字，例如 NVIDIA。會保留原文標題，並嘗試用自動語言偵測翻成繁體中文。"
+    st.subheader("來源策略")
+    source_mode = st.radio(
+        "新聞來源",
+        ["全球覆蓋", "主流財經來源優先"],
+        index=1,
+        help="主流財經來源優先會額外嘗試搜尋 Reuters / CNBC / MarketWatch / Yahoo Finance 等來源；仍然透過 GDELT 索引，不直接爬 Reuters。"
     )
-    timespan = st.selectbox(
-        "新聞時間範圍",
-        options=["1h", "6h", "12h", "24h", "3d", "7d"],
-        index=2
-    )
-    max_records = st.slider("最多新聞篇數", 5, 50, 10, step=5)
-    translate_titles = st.checkbox("保留原文標題，並智慧翻譯成繁中", value=True)
+
+    preferred_domains = []
+    per_domain_records = 5
+    if source_mode == "主流財經來源優先":
+        preferred_domains = st.multiselect(
+            "加強搜尋的財經來源",
+            options=PREFERRED_FINANCE_DOMAINS,
+            default=["reuters.com", "cnbc.com", "marketwatch.com", "finance.yahoo.com"],
+        )
+        per_domain_records = st.slider("每個財經來源最多篇數", 1, 10, 3)
+
+    st.divider()
+    st.subheader("全球事件設定")
+    num_files = st.slider("最近幾個 15 分鐘事件檔", 1, 12, 4)
+    max_rows = st.slider("每個事件檔最多列數", 1000, 50000, 20000, step=1000)
+    root_filter = st.multiselect("事件大類", options=list(ROOT_EVENT_LABELS.values()), default=[])
+    country_filter = st.text_input("事件地點關鍵字", value="")
+    min_mentions = st.slider("事件最低提及次數", 0, 100, 0)
+    max_event_items = st.slider("納入統合新聞流的事件數", 0, 100, 30)
+
+    st.divider()
+    st.subheader("顯示")
     display_mode = st.radio("閱讀版型", ["手機卡片", "電腦表格"], index=0)
-    st.caption("V7：地圖拖曳時不回傳互動事件，減少忽暗忽亮；地圖啟用跨日期線跳轉。")
-    search_button = st.button("搜尋公司新聞", type="primary")
+    map_show_articles = st.checkbox("地圖顯示公司/財經新聞", value=True)
+    map_show_events = st.checkbox("地圖顯示全球事件", value=True)
 
-with st.spinner("正在抓取 GDELT 最新事件資料..."):
-    events = load_latest_events(num_files=num_files, max_rows_per_file=max_rows)
+    search_button = st.button("更新統合新聞流", type="primary")
 
-filtered = events.copy()
-
-if root_filter:
-    filtered = filtered[filtered["root_label"].isin(root_filter)]
-
-if country_filter.strip():
-    q = country_filter.strip().lower()
-    filtered = filtered[filtered["where"].str.lower().str.contains(q, na=False)]
-
-if actor_filter.strip():
-    q = actor_filter.strip().lower()
-    filtered = filtered[
-        filtered["actor1"].str.lower().str.contains(q, na=False)
-        | filtered["actor2"].str.lower().str.contains(q, na=False)
-        | filtered["source"].str.lower().str.contains(q, na=False)
-    ]
-
-filtered = filtered[filtered["NumMentions"].fillna(0) >= min_mentions]
+with st.spinner("正在抓取 GDELT 全球事件資料..."):
+    events_all = load_latest_events(num_files=num_files, max_rows_per_file=max_rows)
 
 if "articles" not in st.session_state:
     st.session_state["articles"] = pd.DataFrame()
-if "last_company_query" not in st.session_state:
-    st.session_state["last_company_query"] = ""
+if "last_query" not in st.session_state:
+    st.session_state["last_query"] = ""
 
 if search_button:
     with st.spinner("正在搜尋公司 / 財經新聞..."):
-        st.session_state["articles"] = search_company_news_cached(
-            company_query,
+        st.session_state["articles"] = search_article_news(
+            query=query,
             timespan=timespan,
-            max_records=max_records,
-            translate_titles=translate_titles
+            max_records=article_records,
+            translate_titles=translate_titles,
+            preferred_mode=(source_mode == "主流財經來源優先"),
+            preferred_domains=tuple(preferred_domains),
+            per_domain_records=per_domain_records,
         )
-        st.session_state["last_company_query"] = company_query
+        st.session_state["last_query"] = query
 
 articles = st.session_state["articles"]
+events_filtered = filter_events(
+    events_all,
+    keyword=query,
+    root_filter=root_filter,
+    country_filter=country_filter,
+    min_mentions=min_mentions,
+    max_events=max_event_items
+)
+
+feed = build_unified_feed(articles, events_filtered)
 
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("事件數", f"{len(filtered):,}")
-col2.metric("原始事件數", f"{len(events):,}")
-col3.metric("公司新聞篇數", f"{len(articles):,}")
-col4.metric("資料更新", "GDELT 15min")
+col1.metric("統合新聞流", f"{len(feed):,}")
+col2.metric("公司/財經新聞", f"{len(articles):,}")
+col3.metric("全球事件", f"{len(events_filtered):,}")
+col4.metric("事件原始數", f"{len(events_all):,}")
 
-tab_news, tab_company_map, tab_map, tab_table, tab_graph = st.tabs(["公司新聞", "公司新聞地圖", "事件地圖", "事件表", "關係圖"])
+tab_feed, tab_map, tab_graph, tab_raw = st.tabs(["統合新聞流", "統合地圖", "關係圖", "原始資料"])
 
-with tab_news:
-    st.subheader("公司 / 財經新聞搜尋")
-    st.caption("V6 版：公司新聞會保留原文標題，並用自動語言偵測翻成繁中；公司新聞地圖以新聞來源國家定位。")
+with tab_feed:
+    st.subheader("統合新聞流")
+    st.caption("這裡把公司/財經新聞與全球事件統合在同一條時間流。公司新聞來自 GDELT DOC；全球事件來自 GDELT Event Database。")
 
-    if articles.empty:
-        st.info("尚未搜尋，或目前沒有查到公司新聞。若看到限流或非 JSON，請等 5～10 分鐘再查，先用單一關鍵字 NVIDIA。")
+    if feed.empty:
+        st.info("尚未查到統合資料。請在左側設定關鍵字後按「更新統合新聞流」。")
     else:
-        st.success(f"查詢關鍵字：{st.session_state.get('last_company_query', '')}")
-
-        c1, c2 = st.columns(2)
-
-        with c1:
-            st.markdown("**來源網站 Top 10**")
-            st.dataframe(
-                articles["domain"].value_counts().head(10).reset_index().rename(
-                    columns={"domain": "domain", "count": "articles"}
-                ),
-                use_container_width=True
-            )
-
-        with c2:
-            st.markdown("**來源國家 Top 10**")
-            st.dataframe(
-                articles["source_country"].value_counts().head(10).reset_index().rename(
-                    columns={"source_country": "source_country", "count": "articles"}
-                ),
-                use_container_width=True
-            )
-
-        st.markdown("### 最新文章")
-
         if display_mode == "手機卡片":
-            for _, row in articles.head(40).iterrows():
+            for _, row in feed.head(100).iterrows():
+                dtype = html.escape(str(row.get("data_type", "")))
                 title = html.escape(str(row.get("title", "")))
                 title_zh = html.escape(str(row.get("title_zh", "")))
                 url = str(row.get("url", ""))
                 url_safe = html.escape(url, quote=True)
                 domain = html.escape(str(row.get("domain", "")))
                 time_utc = html.escape(str(row.get("time_utc", "")))
-                country = html.escape(str(row.get("source_country", "")))
-                lang = html.escape(str(row.get("language", "")))
+                location = html.escape(str(row.get("location", "")))
+                quality = html.escape(str(row.get("source_quality", "")))
+                summary = html.escape(str(row.get("summary", "")))
 
                 title_html = title
                 if url.startswith("http"):
                     title_html = f"<a href='{url_safe}' target='_blank'>{title}</a>"
 
-                zh_html = title_zh if title_zh else "暫無翻譯或翻譯服務暫時不可用"
+                zh_html = title_zh if title_zh else title
 
                 st.markdown(
                     f"""
                     <div class="article-card">
-                        <div class="article-original">原文：{title_html}</div>
+                        <div class="article-type">{dtype}</div>
                         <div class="article-zh">中文：{zh_html}</div>
-                        <div class="article-meta">{time_utc}<br>{domain}｜{country}｜{lang}</div>
-                        <div class="article-source"><a href="{url_safe}" target="_blank">打開原文來源</a></div>
+                        <div class="article-original">原文 / 原始描述：{title_html}</div>
+                        <div class="article-meta">{time_utc}<br>{domain}｜{location}｜{quality}<br>{summary}</div>
+                        <div class="article-source"><a href="{url_safe}" target="_blank">打開來源</a></div>
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
         else:
-            table_cols = ["time_utc", "title", "title_zh", "domain", "source_country", "language", "url"]
-            st.dataframe(
-                articles[[c for c in table_cols if c in articles.columns]],
-                use_container_width=True
-            )
-
-        with st.expander("查看完整表格"):
-            table_cols = ["time_utc", "title", "title_zh", "domain", "source_country", "language", "url"]
-            st.dataframe(
-                articles[[c for c in table_cols if c in articles.columns]],
-                use_container_width=True
-            )
-
-
-with tab_company_map:
-    st.subheader("公司新聞地圖")
-    st.caption("這張地圖使用公司新聞的 source_country 定位，所以代表新聞來源國家，不一定是事件發生地點。")
-    if articles.empty:
-        st.info("請先到左側 B 區按「搜尋公司新聞」，查到文章後這裡才會出現公司新聞地圖。")
-    else:
-        company_map = build_company_news_map(articles)
-        st_folium(company_map, width=None, height=680, returned_objects=[], key="company_news_map")
+            table_cols = ["time_utc", "data_type", "title_zh", "title", "domain", "source_quality", "location", "language", "url"]
+            st.dataframe(feed[[c for c in table_cols if c in feed.columns]], use_container_width=True)
 
 with tab_map:
-    st.subheader("事件地圖")
-    st.caption("這裡查的是 GDELT Event Database；比較適合戰爭、外交、抗議、攻擊、制裁，不一定會完整抓到公司財經新聞。")
-    if filtered.empty:
-        st.info("目前沒有符合條件的事件。若要查公司新聞，請切到「公司新聞」頁籤。")
-    else:
-        m = build_map(filtered.head(1000))
-        st_folium(m, width=None, height=680, returned_objects=[], key="event_map")
-
-with tab_table:
-    st.subheader("事件明細")
-    display_cols = [
-        "event_time_utc", "who", "where", "what",
-        "NumMentions", "NumArticles", "AvgTone", "GoldsteinScale", "source"
-    ]
-    if filtered.empty:
-        st.info("目前沒有符合條件的事件。")
-    else:
-        st.dataframe(filtered[display_cols].head(1000), use_container_width=True)
+    st.subheader("統合地圖")
+    st.caption("紫色：公司/財經新聞來源國家。藍/橘/紅/綠：全球事件地點。公司新聞目前仍以 source_country 定位，不等於事件真實發生地。")
+    unified_map = build_unified_map(
+        articles=articles,
+        events=events_filtered,
+        show_articles=map_show_articles,
+        show_events=map_show_events,
+    )
+    st_folium(unified_map, width=None, height=680, returned_objects=[], key="unified_map")
 
 with tab_graph:
-    st.subheader("事件關係圖：人物 / 組織 ↔ 事件 ↔ 地點")
-    if filtered.empty:
-        st.info("目前沒有符合條件的事件。")
+    st.subheader("統合關係圖")
+    if feed.empty:
+        st.info("目前沒有資料可繪製關係圖。")
     else:
-        graph_path = build_relationship_graph(filtered, max_events=80)
+        graph_path = build_relationship_graph(feed)
         with open(graph_path, "r", encoding="utf-8") as f:
             st.components.v1.html(f.read(), height=700, scrolling=True)
+
+with tab_raw:
+    st.subheader("原始資料")
+    st.markdown("### 公司/財經新聞")
+    if articles.empty:
+        st.info("尚未查到公司/財經新聞。")
+    else:
+        st.dataframe(articles, use_container_width=True)
+
+    st.markdown("### 全球事件")
+    if events_filtered.empty:
+        st.info("目前沒有符合條件的全球事件。")
+    else:
+        display_cols = [
+            "event_time_utc", "who", "where", "what",
+            "NumMentions", "NumArticles", "AvgTone", "GoldsteinScale", "source"
+        ]
+        st.dataframe(events_filtered[[c for c in display_cols if c in events_filtered.columns]], use_container_width=True)
