@@ -17,7 +17,7 @@ from streamlit_folium import st_folium
 
 
 # ------------------------------------------------------------
-# Global News Radar V11
+# Global News Radar V12
 # Unified Feed:
 # - GDELT DOC API: company / financial / general article search
 # - GDELT Event Database: geopolitical / social / event database
@@ -251,7 +251,7 @@ def gdelt_doc_request(query: str, timespan: str, max_records: int, timeout_secon
         "timespan": timespan,
     }
 
-    headers = {"User-Agent": "GlobalNewsRadarV11/1.0"}
+    headers = {"User-Agent": "GlobalNewsRadarV12/1.0"}
 
     try:
         r = requests.get(GDELT_DOC_API, params=params, headers=headers, timeout=timeout_seconds)
@@ -447,6 +447,22 @@ def marker_color_for_event(row) -> str:
     return "blue"
 
 
+
+def wrapped_longitudes(lon):
+    """Return repeated longitudes so markers stay visible on wrapped world maps.
+
+    Leaflet repeats the world horizontally. A marker at -98° can disappear
+    when the user pans to another world copy. Duplicating at lon±360 keeps
+    the same marker visible across copies.
+    """
+    try:
+        lon = float(lon)
+        return [lon, lon - 360, lon + 360]
+    except Exception:
+        return [lon]
+
+
+
 def count_badge_html(count: int, badge_type: str = "news") -> str:
     """Inline-styled badge.
 
@@ -521,16 +537,17 @@ def build_world_overview_map(articles: pd.DataFrame, events: pd.DataFrame, show_
             </div>
             """
 
-            folium.Marker(
-                location=list(coords),
-                popup=folium.Popup(popup_html, max_width=430),
-                tooltip=f"公司/財經新聞｜{country_name}｜{len(group)} 篇",
-                icon=folium.DivIcon(
-                    html=count_badge_html(len(group), "news"),
-                    icon_size=(34, 34),
-                    icon_anchor=(17, 17),
-                ),
-            ).add_to(article_layer)
+            for wrapped_lon in wrapped_longitudes(coords[1]):
+                folium.Marker(
+                    location=[coords[0], wrapped_lon],
+                    popup=folium.Popup(popup_html, max_width=430),
+                    tooltip=f"公司/財經新聞｜{country_name}｜{len(group)} 篇",
+                    icon=folium.DivIcon(
+                        html=count_badge_html(len(group), "news"),
+                        icon_size=(36, 36),
+                        icon_anchor=(18, 18),
+                    ),
+                ).add_to(article_layer)
 
     if show_events and events is not None and not events.empty:
         event_layer = folium.FeatureGroup(name="全球事件數量", show=True).add_to(m)
@@ -576,16 +593,17 @@ def build_world_overview_map(articles: pd.DataFrame, events: pd.DataFrame, show_
                 </div>
                 """
 
-                folium.Marker(
-                    location=[lat, lon],
-                    popup=folium.Popup(popup_html, max_width=420),
-                    tooltip=f"全球事件｜{place}｜{len(group)} 件",
-                    icon=folium.DivIcon(
-                        html=count_badge_html(len(group), badge_type),
-                        icon_size=(34, 34),
-                        icon_anchor=(17, 17),
-                    ),
-                ).add_to(event_layer)
+                for wrapped_lon in wrapped_longitudes(lon):
+                    folium.Marker(
+                        location=[lat, wrapped_lon],
+                        popup=folium.Popup(popup_html, max_width=420),
+                        tooltip=f"全球事件｜{place}｜{len(group)} 件",
+                        icon=folium.DivIcon(
+                            html=count_badge_html(len(group), badge_type),
+                            icon_size=(36, 36),
+                            icon_anchor=(18, 18),
+                        ),
+                    ).add_to(event_layer)
 
     folium.LayerControl(collapsed=True).add_to(m)
     return m
@@ -637,12 +655,13 @@ def build_unified_map(articles: pd.DataFrame, events: pd.DataFrame, show_article
                 <ol>{''.join(items_html)}</ol>
             </div>
             """
-            folium.Marker(
-                location=list(coords),
-                popup=folium.Popup(popup_html, max_width=420),
-                tooltip=f"公司新聞｜{country_name}｜{len(group)} 篇",
-                icon=folium.Icon(color="purple", icon="info-sign"),
-            ).add_to(article_cluster)
+            for wrapped_lon in wrapped_longitudes(coords[1]):
+                folium.Marker(
+                    location=[coords[0], wrapped_lon],
+                    popup=folium.Popup(popup_html, max_width=420),
+                    tooltip=f"公司新聞｜{country_name}｜{len(group)} 篇",
+                    icon=folium.Icon(color="purple", icon="info-sign"),
+                ).add_to(article_cluster)
 
     if show_events and events is not None and not events.empty:
         event_cluster = MarkerCluster(name="全球事件").add_to(m)
@@ -668,12 +687,13 @@ def build_unified_map(articles: pd.DataFrame, events: pd.DataFrame, show_article
                 {source_html}
             </div>
             """
-            folium.Marker(
-                location=[lat, lon],
-                popup=folium.Popup(popup_html, max_width=380),
-                tooltip=f"事件｜{safe_text(row.get('where'))}｜{safe_text(row.get('root_label'))}",
-                icon=folium.Icon(color=marker_color_for_event(row), icon="info-sign"),
-            ).add_to(event_cluster)
+            for wrapped_lon in wrapped_longitudes(lon):
+                folium.Marker(
+                    location=[lat, wrapped_lon],
+                    popup=folium.Popup(popup_html, max_width=380),
+                    tooltip=f"事件｜{safe_text(row.get('where'))}｜{safe_text(row.get('root_label'))}",
+                    icon=folium.Icon(color=marker_color_for_event(row), icon="info-sign"),
+                ).add_to(event_cluster)
 
     folium.LayerControl().add_to(m)
 
@@ -725,7 +745,7 @@ def build_relationship_graph(feed: pd.DataFrame) -> str:
     return html_path
 
 
-st.set_page_config(page_title="Global News Radar V11", layout="wide")
+st.set_page_config(page_title="Global News Radar V12", layout="wide")
 
 st.markdown("""
 <style>
@@ -807,7 +827,7 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V11：統合新聞流 + 統合地圖")
+st.title("🌍 Global News Radar V12：統合新聞流 + 統合地圖")
 
 with st.sidebar:
     st.header("統合搜尋")
@@ -852,9 +872,23 @@ with st.sidebar:
     map_show_articles = st.checkbox("地圖顯示公司/財經新聞", value=True)
     map_show_events = st.checkbox("地圖顯示全球事件", value=True)
     map_mode = st.radio("地圖模式", ["世界總覽：數量標記", "詳細地圖：可分群縮放"], index=0)
-    st.caption("V10：手機版世界總覽預設 zoom=1，數量標記使用地圖內嵌樣式，避免手機看不到。")
+    st.caption("V12：數量標記會在世界地圖多個副本同步顯示，避免左右滑動後標籤消失。")
 
-    search_button = st.button("更新統合新聞流", type="primary")
+    st.divider()
+    st.subheader("快捷操作")
+    st.caption("往下設定完不用滑回上面，直接按下面這顆更新。側欄收合請點左上角箭頭；下面按鈕會嘗試收合，若 iPhone Safari 無效就用左上角箭頭。")
+    bottom_search_button = st.button("更新統合新聞流", type="primary", key="bottom_update_feed")
+    st.components.v1.html(
+        """
+        <button style="width:100%;padding:12px 14px;border-radius:10px;border:0;background:#444;color:white;font-size:16px;"
+        onclick="
+          const btn = window.parent.document.querySelector('[data-testid=stSidebarCollapseButton]');
+          if (btn) { btn.click(); }
+        ">嘗試收起側欄</button>
+        """,
+        height=55,
+    )
+    search_button = bottom_search_button
 
 with st.spinner("正在抓取 GDELT 全球事件資料..."):
     events_all = load_latest_events(num_files=num_files, max_rows_per_file=max_rows)
@@ -942,7 +976,7 @@ with tab_feed:
 
 with tab_map:
     st.subheader("統合地圖")
-    st.caption("世界總覽模式會固定以手機可看到的全球大地圖開場。紫色數字＝公司/財經新聞來源國家篇數；藍色數字＝全球事件；紅色數字＝偏負面/風險事件。")
+    st.caption("世界總覽模式固定以手機可看到的全球大地圖開場。V12 會把同一標記複製到左右世界副本，避免拖曳後標籤消失。紫色＝公司/財經新聞；藍色＝全球事件；紅色＝偏負面/風險事件。")
     if map_mode == "世界總覽：數量標記":
         unified_map = build_world_overview_map(
             articles=articles,

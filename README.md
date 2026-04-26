@@ -1,24 +1,23 @@
-# Global News Radar V11
+# Global News Radar V12
 
-V11 improves search stability.
+V12 fixes two mobile usability issues.
 
 ## What changed
 
-- Default source mode changed to Fast Stable.
-- Fast Stable only sends one GDELT DOC API request.
-- Financial-source boost is optional and limited.
-- API timeout is configurable.
-- Timeout errors no longer block the whole app.
-- Recommended mobile default:
-  - Keyword: NVIDIA
-  - Time range: 12h or 24h
-  - Article count: 15
-  - Source mode: Fast Stable
+- Sidebar starts collapsed by default, so the map gets more screen space.
+- Added a bottom shortcut area in the sidebar:
+  - Update unified feed
+  - Try to collapse sidebar
+- World-map count badges are duplicated at lon±360.
+  - This keeps markers visible when panning horizontally across wrapped map copies.
+- Keeps V11 stable search behavior.
+- Keeps V10 visible count badges and mobile world-map view.
 
 ## Notes
 
-- GDELT DOC API can be slow or rate-limited.
-- Reuters / finance-source mode still uses GDELT's index; it does not scrape Reuters directly.
+- The "Try to collapse sidebar" button uses a lightweight UI hack. On some iPhone Safari versions it may not work; the built-in top-left arrow always works.
+- Company / financial news map uses source_country, not exact event location.
+- Global events use GDELT Event Database coordinates.
 
 ## Deploy on Streamlit Community Cloud
 
