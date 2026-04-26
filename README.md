@@ -1,23 +1,24 @@
-# Global News Radar V9
+# Global News Radar V10
 
-V9 improves the map opening experience.
+V10 fixes the mobile world overview map.
 
 ## What changed
 
-- Unified map now defaults to a world overview map.
-- The initial map view stays as a global world map.
-- Markers display visible counts directly on the map.
-  - Purple badge: company / financial news count by source country.
-  - Blue badge: global event count.
-  - Red badge: negative / risk event count.
-- Added map mode:
-  - World overview: count badges
-  - Detailed map: cluster / zoom mode
-- Keeps unified news feed, preferred finance sources, translation, mobile cards, and desktop table.
+- World overview map now starts at zoom=1 for mobile.
+- Count badges use inline styles inside Folium, so they are visible inside the map iframe.
+- Layer control is collapsed by default to avoid blocking the map on mobile.
+- Unified map height is reduced for mobile readability.
+- Source country names are normalized for common variants like US / USA / United States of America.
+
+## Marker colors
+
+- Purple count badge: company / financial news count by source country.
+- Blue count badge: global event count.
+- Red count badge: negative / risk event count.
 
 ## Important notes
 
-- Company / financial news map still uses `source_country`, which means news source country, not exact event location.
+- Company / financial news map uses `source_country`, which means news source country, not exact event location.
 - Global events use GDELT Event Database coordinates.
 
 ## Deploy on Streamlit Community Cloud

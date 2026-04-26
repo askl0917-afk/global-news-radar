@@ -17,7 +17,7 @@ from streamlit_folium import st_folium
 
 
 # ------------------------------------------------------------
-# Global News Radar V9
+# Global News Radar V10
 # Unified Feed:
 # - GDELT DOC API: company / financial / general article search
 # - GDELT Event Database: geopolitical / social / event database
@@ -111,6 +111,22 @@ def safe_text(value, fallback="未知"):
         return fallback
     return str(value).strip()
 
+
+
+def normalize_country_name(country: str) -> str:
+    c = str(country or "").strip()
+    aliases = {
+        "United States of America": "United States",
+        "U.S.": "United States",
+        "U.S.A.": "United States",
+        "USA": "United States",
+        "US": "United States",
+        "UK": "United Kingdom",
+        "Republic of Korea": "South Korea",
+        "Korea, Republic of": "South Korea",
+        "Korea Republic": "South Korea",
+    }
+    return aliases.get(c, c)
 
 def source_quality(domain: str) -> str:
     d = (domain or "").lower()
@@ -235,7 +251,7 @@ def gdelt_doc_request(query: str, timespan: str, max_records: int) -> pd.DataFra
         "timespan": timespan,
     }
 
-    headers = {"User-Agent": "GlobalNewsRadarV9/1.0"}
+    headers = {"User-Agent": "GlobalNewsRadarV10/1.0"}
 
     try:
         r = requests.get(GDELT_DOC_API, params=params, headers=headers, timeout=30)
@@ -321,6 +337,7 @@ def search_article_news(
     df = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["url"])
     df["source_quality"] = df["domain"].apply(source_quality)
     df["data_type"] = "新聞文章"
+    df["source_country"] = df["source_country"].apply(normalize_country_name)
     df["display_location"] = df["source_country"].fillna("")
     df["lat"] = df["source_country"].apply(lambda c: COUNTRY_COORDS.get(str(c).strip(), (None, None))[0])
     df["lon"] = df["source_country"].apply(lambda c: COUNTRY_COORDS.get(str(c).strip(), (None, None))[1])
@@ -422,12 +439,26 @@ def marker_color_for_event(row) -> str:
 
 
 def count_badge_html(count: int, badge_type: str = "news") -> str:
-    cls = "map-badge-news"
+    """Inline-styled badge.
+
+    Folium maps render inside an iframe, so Streamlit page CSS may not apply.
+    V10 uses inline styles to make count markers visible on mobile.
+    """
+    color = "#7b2cbf"  # purple: company / finance news
     if badge_type == "event":
-        cls = "map-badge-event"
+        color = "#1976d2"  # blue: general events
     elif badge_type == "risk":
-        cls = "map-badge-risk"
-    return f'<div class="map-badge {cls}">{count}</div>'
+        color = "#d62828"  # red: negative / risk events
+
+    return (
+        f'<div style="'
+        f'width:36px;height:36px;border-radius:999px;'
+        f'background:{color};color:white;'
+        f'font-weight:900;font-size:15px;line-height:36px;text-align:center;'
+        f'border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.45);'
+        f'font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;'
+        f'">{count}</div>'
+    )
 
 
 def build_world_overview_map(articles: pd.DataFrame, events: pd.DataFrame, show_articles=True, show_events=True):
@@ -436,21 +467,21 @@ def build_world_overview_map(articles: pd.DataFrame, events: pd.DataFrame, show_
     This map intentionally starts from a full-world view instead of fitting to one region.
     """
     m = folium.Map(
-        location=[20, 0],
-        zoom_start=2,
-        min_zoom=2,
+        location=[15, 0],
+        zoom_start=1,
+        min_zoom=1,
         tiles="CartoDB positron",
         world_copy_jump=True,
         prefer_canvas=True,
         control_scale=True,
-        max_bounds=True,
+        max_bounds=False,
     )
 
     if show_articles and articles is not None and not articles.empty and "source_country" in articles.columns:
         article_layer = folium.FeatureGroup(name="公司/財經新聞數量", show=True).add_to(m)
 
         for country, group in articles.groupby("source_country", dropna=True):
-            country_name = str(country).strip()
+            country_name = normalize_country_name(country)
             if not country_name:
                 continue
 
@@ -547,7 +578,7 @@ def build_world_overview_map(articles: pd.DataFrame, events: pd.DataFrame, show_
                     ),
                 ).add_to(event_layer)
 
-    folium.LayerControl(collapsed=False).add_to(m)
+    folium.LayerControl(collapsed=True).add_to(m)
     return m
 
 
@@ -566,7 +597,7 @@ def build_unified_map(articles: pd.DataFrame, events: pd.DataFrame, show_article
         article_cluster = MarkerCluster(name="公司/財經新聞").add_to(m)
 
         for country, group in articles.groupby("source_country", dropna=True):
-            country_name = str(country).strip()
+            country_name = normalize_country_name(country)
             if not country_name:
                 continue
 
@@ -685,7 +716,7 @@ def build_relationship_graph(feed: pd.DataFrame) -> str:
     return html_path
 
 
-st.set_page_config(page_title="Global News Radar V9", layout="wide")
+st.set_page_config(page_title="Global News Radar V10", layout="wide")
 
 st.markdown("""
 <style>
@@ -767,7 +798,7 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V9：統合新聞流 + 統合地圖")
+st.title("🌍 Global News Radar V10：統合新聞流 + 統合地圖")
 
 with st.sidebar:
     st.header("統合搜尋")
@@ -810,7 +841,7 @@ with st.sidebar:
     map_show_articles = st.checkbox("地圖顯示公司/財經新聞", value=True)
     map_show_events = st.checkbox("地圖顯示全球事件", value=True)
     map_mode = st.radio("地圖模式", ["世界總覽：數量標記", "詳細地圖：可分群縮放"], index=0)
-    st.caption("V9：世界總覽模式固定從全球視角開始，標記直接顯示新聞/事件數量。")
+    st.caption("V10：手機版世界總覽預設 zoom=1，數量標記使用地圖內嵌樣式，避免手機看不到。")
 
     search_button = st.button("更新統合新聞流", type="primary")
 
@@ -899,7 +930,7 @@ with tab_feed:
 
 with tab_map:
     st.subheader("統合地圖")
-    st.caption("世界總覽模式會固定以世界大地圖開場，標記上直接顯示數量。紫色：公司/財經新聞；藍色：全球事件；紅色：偏負面/風險事件。")
+    st.caption("世界總覽模式會固定以手機可看到的全球大地圖開場。紫色數字＝公司/財經新聞來源國家篇數；藍色數字＝全球事件；紅色數字＝偏負面/風險事件。")
     if map_mode == "世界總覽：數量標記":
         unified_map = build_world_overview_map(
             articles=articles,
@@ -914,7 +945,7 @@ with tab_map:
             show_articles=map_show_articles,
             show_events=map_show_events,
         )
-    st_folium(unified_map, width=None, height=680, returned_objects=[], key="unified_map")
+    st_folium(unified_map, width=None, height=520, returned_objects=[], key="unified_map")
 
 with tab_graph:
     st.subheader("統合關係圖")
