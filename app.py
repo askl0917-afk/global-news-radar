@@ -1,7 +1,7 @@
 import io
 import html
 import zipfile
-from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 import folium
 import networkx as nx
@@ -12,16 +12,8 @@ from folium.plugins import MarkerCluster
 from pyvis.network import Network
 from streamlit_folium import st_folium
 
-
-# -----------------------------
-# Global News Radar MVP
-# Data source: GDELT 2.0 Event Database 15-minute export files
-# Run:
-#   pip install -r requirements.txt
-#   streamlit run app.py
-# -----------------------------
-
 MASTER_FILE_LIST = "http://data.gdeltproject.org/gdeltv2/masterfilelist.txt"
+GDELT_DOC_API = "https://api.gdeltproject.org/api/v2/doc/doc"
 
 GDELT_COLUMNS = [
     "GlobalEventID", "Day", "MonthYear", "Year", "FractionDate",
@@ -46,7 +38,6 @@ GDELT_COLUMNS = [
     "DATEADDED", "SOURCEURL"
 ]
 
-# CAMEO root event rough labels. You can replace this with the official CAMEO lookup table later.
 ROOT_EVENT_LABELS = {
     "01": "公開聲明 / Statement",
     "02": "呼籲 / Appeal",
@@ -79,10 +70,6 @@ def safe_text(value, fallback="未知"):
 
 @st.cache_data(ttl=900, show_spinner=False)
 def load_latest_events(num_files: int = 4, max_rows_per_file: int = 20000) -> pd.DataFrame:
-    """Load latest GDELT 2.0 event export files.
-
-    num_files=4 means roughly the latest hour because GDELT updates every 15 minutes.
-    """
     response = requests.get(MASTER_FILE_LIST, timeout=30)
     response.raise_for_status()
 
@@ -117,17 +104,15 @@ def load_latest_events(num_files: int = 4, max_rows_per_file: int = 20000) -> pd
                         nrows=max_rows_per_file,
                         on_bad_lines="skip",
                     )
-                    df["source_file"] = url.rsplit("/", 1)[-1]
                     frames.append(df)
         except Exception as exc:
-            st.warning(f"讀取失敗：{url}；原因：{exc}")
+            st.warning(f"讀取 GDELT event file 失敗：{url}；原因：{exc}")
 
     if not frames:
         return pd.DataFrame(columns=GDELT_COLUMNS)
 
     df = pd.concat(frames, ignore_index=True)
 
-    # Numeric conversion
     numeric_cols = [
         "ActionGeo_Lat", "ActionGeo_Long", "GoldsteinScale",
         "NumMentions", "NumSources", "NumArticles", "AvgTone"
@@ -139,12 +124,12 @@ def load_latest_events(num_files: int = 4, max_rows_per_file: int = 20000) -> pd
         df["DATEADDED"], format="%Y%m%d%H%M%S", errors="coerce", utc=True
     )
 
-    # Keep geocoded, root events only to reduce noise
     df = df.dropna(subset=["ActionGeo_Lat", "ActionGeo_Long", "event_time_utc"])
     df = df[
         df["ActionGeo_Lat"].between(-90, 90)
         & df["ActionGeo_Long"].between(-180, 180)
     ]
+
     df = df[df["IsRootEvent"].fillna("") == "1"]
 
     df["actor1"] = df["Actor1Name"].apply(lambda x: safe_text(x, "未知角色A"))
@@ -155,13 +140,59 @@ def load_latest_events(num_files: int = 4, max_rows_per_file: int = 20000) -> pd
     df["what"] = df["root_label"] + "｜CAMEO " + df["EventCode"].fillna("")
     df["source"] = df["SOURCEURL"].apply(lambda x: safe_text(x, ""))
 
-    # De-duplicate rough duplicates
     df = df.drop_duplicates(
         subset=["GlobalEventID", "SOURCEURL", "ActionGeo_Lat", "ActionGeo_Long"],
         keep="last"
     )
 
     return df.sort_values("event_time_utc", ascending=False)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def search_company_news(query: str, timespan: str = "24h", max_records: int = 100) -> pd.DataFrame:
+    query = (query or "").strip()
+    if not query:
+        return pd.DataFrame()
+
+    params = {
+        "query": query,
+        "mode": "ArtList",
+        "format": "json",
+        "maxrecords": max_records,
+        "sort": "hybridrel",
+        "timespan": timespan,
+    }
+
+    try:
+        r = requests.get(GDELT_DOC_API, params=params, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as exc:
+        st.warning(f"GDELT DOC API 查詢失敗：{exc}")
+        return pd.DataFrame()
+
+    articles = data.get("articles", [])
+    rows = []
+
+    for a in articles:
+        url = a.get("url", "")
+        domain = a.get("domain") or (urlparse(url).netloc if url else "")
+        rows.append({
+            "time_utc": a.get("seendate", ""),
+            "title": a.get("title", ""),
+            "domain": domain,
+            "source_country": a.get("sourcecountry", ""),
+            "language": a.get("language", ""),
+            "url": url,
+            "image": a.get("socialimage", ""),
+        })
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["time_utc"] = pd.to_datetime(df["time_utc"], errors="coerce", utc=True)
+        df = df.drop_duplicates(subset=["url"]).sort_values("time_utc", ascending=False)
+
+    return df
 
 
 def event_popup(row) -> str:
@@ -185,13 +216,12 @@ def event_popup(row) -> str:
 
 def build_map(df: pd.DataFrame):
     m = folium.Map(location=[20, 0], zoom_start=2, tiles="CartoDB positron")
-    cluster = MarkerCluster(name="全球新聞事件").add_to(m)
+    cluster = MarkerCluster(name="全球事件").add_to(m)
 
     for _, row in df.iterrows():
         lat = row["ActionGeo_Lat"]
         lon = row["ActionGeo_Long"]
 
-        # Negative Goldstein = more conflictual. Use marker color as quick visual hint.
         goldstein = row.get("GoldsteinScale")
         if pd.notna(goldstein) and goldstein <= -5:
             color = "red"
@@ -214,13 +244,6 @@ def build_map(df: pd.DataFrame):
 
 
 def build_relationship_graph(df: pd.DataFrame, max_events: int = 80) -> str:
-    """Build a simple actor-event-location relationship graph.
-
-    Nodes:
-      actor, event, location
-    Edges:
-      actor -> event, event -> actor, event -> location
-    """
     g = nx.Graph()
     sample = df.head(max_events).copy()
 
@@ -244,52 +267,42 @@ def build_relationship_graph(df: pd.DataFrame, max_events: int = 80) -> str:
     net = Network(height="650px", width="100%", bgcolor="#ffffff", font_color="#222222")
     net.from_nx(g)
     net.toggle_physics(True)
-    net.set_options("""
-    var options = {
-      "nodes": {
-        "shape": "dot",
-        "size": 14,
-        "font": {"size": 14}
-      },
-      "edges": {
-        "smooth": true
-      },
-      "physics": {
-        "barnesHut": {
-          "gravitationalConstant": -25000,
-          "centralGravity": 0.2,
-          "springLength": 120,
-          "springConstant": 0.04
-        },
-        "minVelocity": 0.75
-      }
-    }
-    """)
 
     html_path = "relationship_graph.html"
     net.save_graph(html_path)
     return html_path
 
 
-st.set_page_config(page_title="Global News Radar MVP", layout="wide")
-st.title("🌍 Global News Radar：全球即時事件地圖 MVP")
+st.set_page_config(page_title="Global News Radar V2", layout="wide")
+st.title("🌍 Global News Radar V2：全球事件地圖 + 公司新聞搜尋")
 
 with st.sidebar:
-    st.header("資料設定")
-    num_files = st.slider("抓取最近幾個 15 分鐘檔案", 1, 12, 4)
-    max_rows = st.slider("每個檔案最多讀取列數", 1000, 50000, 20000, step=1000)
+    st.header("A. 全球事件地圖")
+    num_files = st.slider("抓取最近幾個 15 分鐘事件檔", 1, 12, 4)
+    max_rows = st.slider("每個事件檔最多讀取列數", 1000, 50000, 20000, step=1000)
 
-    st.header("篩選")
     root_filter = st.multiselect(
         "事件大類",
         options=list(ROOT_EVENT_LABELS.values()),
         default=[]
     )
-    country_filter = st.text_input("地點關鍵字，例如 Taiwan / Taipei / Israel")
-    actor_filter = st.text_input("角色關鍵字，例如 Trump / China / NVIDIA")
-    min_mentions = st.slider("最低提及次數 NumMentions", 0, 100, 0)
+    country_filter = st.text_input("事件地點關鍵字，例如 Taiwan / China / Israel")
+    actor_filter = st.text_input("事件角色關鍵字，例如 Trump / China / Russia")
+    min_mentions = st.slider("事件最低提及次數 NumMentions", 0, 100, 0)
 
-    st.caption("提示：紅色偏衝突，綠色偏合作；這只是 GDELT GoldsteinScale 的粗略視覺化。")
+    st.divider()
+    st.header("B. 公司 / 財經新聞搜尋")
+    company_query = st.text_input(
+        "新聞關鍵字",
+        value='NVIDIA OR NVDA OR "Jensen Huang"',
+        help="查公司與財經新聞請用這個欄位，不要只用事件地圖的角色關鍵字。"
+    )
+    timespan = st.selectbox(
+        "新聞時間範圍",
+        options=["1h", "6h", "12h", "24h", "3d", "7d"],
+        index=3
+    )
+    max_records = st.slider("最多新聞篇數", 10, 250, 100, step=10)
 
 with st.spinner("正在抓取 GDELT 最新事件資料..."):
     events = load_latest_events(num_files=num_files, max_rows_per_file=max_rows)
@@ -308,22 +321,76 @@ if actor_filter.strip():
     filtered = filtered[
         filtered["actor1"].str.lower().str.contains(q, na=False)
         | filtered["actor2"].str.lower().str.contains(q, na=False)
+        | filtered["source"].str.lower().str.contains(q, na=False)
     ]
 
 filtered = filtered[filtered["NumMentions"].fillna(0) >= min_mentions]
 
+with st.spinner("正在搜尋公司 / 財經新聞..."):
+    articles = search_company_news(company_query, timespan=timespan, max_records=max_records)
+
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("事件數", f"{len(filtered):,}")
 col2.metric("原始事件數", f"{len(events):,}")
-col3.metric("最新時間 UTC", str(filtered["event_time_utc"].max()) if len(filtered) else "無")
+col3.metric("公司新聞篇數", f"{len(articles):,}")
 col4.metric("資料更新", "GDELT 15min")
 
-tab_map, tab_table, tab_graph = st.tabs(["地圖", "事件表", "關係圖"])
+tab_news, tab_map, tab_table, tab_graph = st.tabs(["公司新聞", "事件地圖", "事件表", "關係圖"])
+
+with tab_news:
+    st.subheader("公司 / 財經新聞搜尋")
+    st.caption("這裡查 GDELT DOC API 文章清單，比事件地圖更適合 NVIDIA、NVDA、TSMC、Tesla 這類公司新聞。")
+
+    if articles.empty:
+        st.info("目前沒有查到公司新聞。可以放寬時間範圍，例如 24h → 3d，或改用 NVIDIA / NVDA / Jensen Huang 分別查。")
+    else:
+        c1, c2 = st.columns(2)
+
+        with c1:
+            st.markdown("**來源網站 Top 10**")
+            st.dataframe(
+                articles["domain"].value_counts().head(10).reset_index().rename(
+                    columns={"domain": "domain", "count": "articles"}
+                ),
+                use_container_width=True
+            )
+
+        with c2:
+            st.markdown("**來源國家 Top 10**")
+            st.dataframe(
+                articles["source_country"].value_counts().head(10).reset_index().rename(
+                    columns={"source_country": "source_country", "count": "articles"}
+                ),
+                use_container_width=True
+            )
+
+        st.markdown("### 最新文章")
+        for _, row in articles.head(40).iterrows():
+            title = html.escape(str(row.get("title", "")))
+            url = str(row.get("url", ""))
+            domain = html.escape(str(row.get("domain", "")))
+            time_utc = row.get("time_utc", "")
+            country = html.escape(str(row.get("source_country", "")))
+            lang = html.escape(str(row.get("language", "")))
+
+            if url.startswith("http"):
+                st.markdown(f"**[{title}]({url})**")
+            else:
+                st.markdown(f"**{title}**")
+            st.caption(f"{time_utc}｜{domain}｜{country}｜{lang}")
+            st.divider()
+
+        st.markdown("### 表格")
+        st.dataframe(
+            articles[["time_utc", "title", "domain", "source_country", "language", "url"]],
+            use_container_width=True
+        )
 
 with tab_map:
-    st.subheader("點擊地圖標記查看：誰、何時、何地、何事")
+    st.subheader("事件地圖")
+    st.caption("這裡查的是 GDELT Event Database；比較適合戰爭、外交、抗議、攻擊、制裁，不一定會完整抓到公司財經新聞。")
     if filtered.empty:
-        st.info("目前沒有符合條件的事件。")
+        st.info("目前沒有符合條件的事件。若要查公司新聞，請切到「公司新聞」頁籤。")
     else:
         m = build_map(filtered.head(1000))
         st_folium(m, width=None, height=680)
@@ -334,11 +401,13 @@ with tab_table:
         "event_time_utc", "who", "where", "what",
         "NumMentions", "NumArticles", "AvgTone", "GoldsteinScale", "source"
     ]
-    st.dataframe(filtered[display_cols].head(1000), use_container_width=True)
+    if filtered.empty:
+        st.info("目前沒有符合條件的事件。")
+    else:
+        st.dataframe(filtered[display_cols].head(1000), use_container_width=True)
 
 with tab_graph:
     st.subheader("事件關係圖：人物 / 組織 ↔ 事件 ↔ 地點")
-    st.caption("第一版用 Actor1、Actor2、事件與地點建立關係。進階版可改用 LLM + GKG 做實體消歧與因果鏈。")
     if filtered.empty:
         st.info("目前沒有符合條件的事件。")
     else:
