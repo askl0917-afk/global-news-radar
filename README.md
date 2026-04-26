@@ -1,25 +1,24 @@
-# Global News Radar V10
+# Global News Radar V11
 
-V10 fixes the mobile world overview map.
+V11 improves search stability.
 
 ## What changed
 
-- World overview map now starts at zoom=1 for mobile.
-- Count badges use inline styles inside Folium, so they are visible inside the map iframe.
-- Layer control is collapsed by default to avoid blocking the map on mobile.
-- Unified map height is reduced for mobile readability.
-- Source country names are normalized for common variants like US / USA / United States of America.
+- Default source mode changed to Fast Stable.
+- Fast Stable only sends one GDELT DOC API request.
+- Financial-source boost is optional and limited.
+- API timeout is configurable.
+- Timeout errors no longer block the whole app.
+- Recommended mobile default:
+  - Keyword: NVIDIA
+  - Time range: 12h or 24h
+  - Article count: 15
+  - Source mode: Fast Stable
 
-## Marker colors
+## Notes
 
-- Purple count badge: company / financial news count by source country.
-- Blue count badge: global event count.
-- Red count badge: negative / risk event count.
-
-## Important notes
-
-- Company / financial news map uses `source_country`, which means news source country, not exact event location.
-- Global events use GDELT Event Database coordinates.
+- GDELT DOC API can be slow or rate-limited.
+- Reuters / finance-source mode still uses GDELT's index; it does not scrape Reuters directly.
 
 ## Deploy on Streamlit Community Cloud
 

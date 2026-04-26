@@ -17,7 +17,7 @@ from streamlit_folium import st_folium
 
 
 # ------------------------------------------------------------
-# Global News Radar V10
+# Global News Radar V11
 # Unified Feed:
 # - GDELT DOC API: company / financial / general article search
 # - GDELT Event Database: geopolitical / social / event database
@@ -241,7 +241,7 @@ def load_latest_events(num_files: int = 4, max_rows_per_file: int = 20000) -> pd
     return df.sort_values("event_time_utc", ascending=False)
 
 
-def gdelt_doc_request(query: str, timespan: str, max_records: int) -> pd.DataFrame:
+def gdelt_doc_request(query: str, timespan: str, max_records: int, timeout_seconds: int = 12, quiet: bool = False) -> pd.DataFrame:
     params = {
         "query": query,
         "mode": "ArtList",
@@ -251,33 +251,42 @@ def gdelt_doc_request(query: str, timespan: str, max_records: int) -> pd.DataFra
         "timespan": timespan,
     }
 
-    headers = {"User-Agent": "GlobalNewsRadarV10/1.0"}
+    headers = {"User-Agent": "GlobalNewsRadarV11/1.0"}
 
     try:
-        r = requests.get(GDELT_DOC_API, params=params, headers=headers, timeout=30)
+        r = requests.get(GDELT_DOC_API, params=params, headers=headers, timeout=timeout_seconds)
 
         if r.status_code == 429:
-            st.warning("GDELT DOC API 暫時限流 429。請等 5～10 分鐘再查，或降低篇數。")
+            if not quiet:
+                st.warning("GDELT DOC API 暫時限流 429。請等 5～10 分鐘再查，或降低篇數。")
             return pd.DataFrame()
 
         if r.status_code != 200:
-            st.warning(f"GDELT DOC API 回傳狀態碼 {r.status_code}。請稍後再試。")
+            if not quiet:
+                st.warning(f"GDELT DOC API 回傳狀態碼 {r.status_code}。請稍後再試。")
             return pd.DataFrame()
 
         text = (r.text or "").strip()
         if not text:
-            st.warning("GDELT DOC API 回傳空白內容。請稍後再試。")
+            if not quiet:
+                st.warning("GDELT DOC API 回傳空白內容。請稍後再試。")
             return pd.DataFrame()
 
         try:
             data = r.json()
         except Exception:
-            preview = text[:180].replace("\n", " ")
-            st.warning(f"GDELT DOC API 回傳不是 JSON。回傳開頭：{preview}")
+            if not quiet:
+                preview = text[:180].replace("\n", " ")
+                st.warning(f"GDELT DOC API 回傳不是 JSON。回傳開頭：{preview}")
             return pd.DataFrame()
 
+    except requests.exceptions.Timeout:
+        if not quiet:
+            st.info(f"GDELT DOC API 這次回應太慢，已跳過本次查詢。建議改 12h / 24h、篇數 10～20，或改用快速穩定模式。")
+        return pd.DataFrame()
     except Exception as exc:
-        st.warning(f"GDELT DOC API 查詢失敗：{exc}")
+        if not quiet:
+            st.warning(f"GDELT DOC API 查詢失敗：{exc}")
         return pd.DataFrame()
 
     articles = data.get("articles", [])
@@ -303,16 +312,16 @@ def gdelt_doc_request(query: str, timespan: str, max_records: int) -> pd.DataFra
         df = df.drop_duplicates(subset=["url"])
     return df
 
-
 @st.cache_data(ttl=1800, show_spinner=False)
 def search_article_news(
     query: str,
     timespan: str = "24h",
-    max_records: int = 30,
+    max_records: int = 20,
     translate_titles: bool = True,
-    preferred_mode: bool = True,
+    preferred_mode: bool = False,
     preferred_domains: tuple = (),
-    per_domain_records: int = 5,
+    per_domain_records: int = 2,
+    timeout_seconds: int = 12,
 ) -> pd.DataFrame:
     query = (query or "").strip()
     if not query:
@@ -321,14 +330,14 @@ def search_article_news(
     frames = []
 
     # Broad GDELT query
-    frames.append(gdelt_doc_request(query=query, timespan=timespan, max_records=max_records))
+    frames.append(gdelt_doc_request(query=query, timespan=timespan, max_records=max_records, timeout_seconds=timeout_seconds, quiet=False))
 
     # Domain-enhanced queries for Reuters / major financial sites.
     # This still uses GDELT's index; it does not scrape Reuters directly.
     if preferred_mode and preferred_domains:
         for domain in preferred_domains:
             domain_q = f'{query} domain:{domain}'
-            frames.append(gdelt_doc_request(query=domain_q, timespan=timespan, max_records=per_domain_records))
+            frames.append(gdelt_doc_request(query=domain_q, timespan=timespan, max_records=per_domain_records, timeout_seconds=timeout_seconds, quiet=True))
 
     frames = [f for f in frames if f is not None and not f.empty]
     if not frames:
@@ -716,7 +725,7 @@ def build_relationship_graph(feed: pd.DataFrame) -> str:
     return html_path
 
 
-st.set_page_config(page_title="Global News Radar V10", layout="wide")
+st.set_page_config(page_title="Global News Radar V11", layout="wide")
 
 st.markdown("""
 <style>
@@ -798,33 +807,35 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V10：統合新聞流 + 統合地圖")
+st.title("🌍 Global News Radar V11：統合新聞流 + 統合地圖")
 
 with st.sidebar:
     st.header("統合搜尋")
     query = st.text_input("關鍵字 / 公司 / 人名", value="NVIDIA")
     timespan = st.selectbox("新聞時間範圍", options=["1h", "6h", "12h", "24h", "3d", "7d"], index=2)
-    article_records = st.slider("一般新聞篇數", 5, 100, 20, step=5)
+    article_records = st.slider("一般新聞篇數", 5, 50, 15, step=5)
     translate_titles = st.checkbox("原文標題 + 智慧翻譯成繁中", value=True)
 
     st.divider()
     st.subheader("來源策略")
     source_mode = st.radio(
         "新聞來源",
-        ["全球覆蓋", "主流財經來源優先"],
-        index=1,
-        help="主流財經來源優先會額外嘗試搜尋 Reuters / CNBC / MarketWatch / Yahoo Finance 等來源；仍然透過 GDELT 索引，不直接爬 Reuters。"
+        ["快速穩定", "主流財經來源優先"],
+        index=0,
+        help="快速穩定只查一次，比較不容易超時。主流財經來源優先會額外嘗試 Reuters / CNBC / MarketWatch / Yahoo Finance，但較容易慢或被限流。"
     )
 
     preferred_domains = []
-    per_domain_records = 5
+    per_domain_records = 2
+    timeout_seconds = st.slider("API 等待秒數", 8, 25, 12)
+    st.caption("建議：手機上先用快速穩定 + 12h/24h + 15篇。要查 Reuters 再切主流財經來源優先。")
     if source_mode == "主流財經來源優先":
         preferred_domains = st.multiselect(
             "加強搜尋的財經來源",
             options=PREFERRED_FINANCE_DOMAINS,
-            default=["reuters.com", "cnbc.com", "marketwatch.com", "finance.yahoo.com"],
+            default=["reuters.com", "cnbc.com"],
         )
-        per_domain_records = st.slider("每個財經來源最多篇數", 1, 10, 3)
+        per_domain_records = st.slider("每個財經來源最多篇數", 1, 5, 2)
 
     st.divider()
     st.subheader("全球事件設定")
@@ -861,8 +872,9 @@ if search_button:
             max_records=article_records,
             translate_titles=translate_titles,
             preferred_mode=(source_mode == "主流財經來源優先"),
-            preferred_domains=tuple(preferred_domains),
+            preferred_domains=tuple(preferred_domains[:3]),
             per_domain_records=per_domain_records,
+            timeout_seconds=timeout_seconds,
         )
         st.session_state["last_query"] = query
 
