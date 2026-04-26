@@ -1,12 +1,15 @@
-# Global News Radar V3
+# Global News Radar V5
 
-V3 fixes repeated GDELT DOC API calls by making company news search manual.
+V5 adds company-news translation and a company-news map.
 
 ## What changed
 
-- Company news search only runs when the user presses the search button.
-- Default article count reduced to avoid 429 Too Many Requests.
-- Event map remains automatic.
+- Keeps the English headline.
+- Adds a Traditional Chinese auto-translation column.
+- Adds a Company News Map tab.
+- Company News Map uses `source_country` as approximate location.
+  - This is the news source country, not necessarily the real event location.
+- Event Map remains the original GDELT Event Database map for geopolitical/social events.
 
 ## Deploy on Streamlit Community Cloud
 
