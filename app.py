@@ -226,7 +226,7 @@ def search_company_news_cached(query: str, timespan: str = "24h", max_records: i
     }
 
     headers = {
-        "User-Agent": "GlobalNewsRadarV6/1.0"
+        "User-Agent": "GlobalNewsRadarV7/1.0"
     }
 
     try:
@@ -304,7 +304,7 @@ def event_popup(row) -> str:
 
 
 def build_map(df: pd.DataFrame):
-    m = folium.Map(location=[20, 0], zoom_start=2, tiles="CartoDB positron")
+    m = folium.Map(location=[20, 0], zoom_start=2, tiles="CartoDB positron", world_copy_jump=True, prefer_canvas=True)
     cluster = MarkerCluster(name="全球事件").add_to(m)
 
     for _, row in df.iterrows():
@@ -338,7 +338,7 @@ def build_company_news_map(articles: pd.DataFrame):
     Important: GDELT DOC article list does not provide precise event coordinates.
     This map uses source_country as a practical first version.
     """
-    m = folium.Map(location=[25, 0], zoom_start=2, tiles="CartoDB positron")
+    m = folium.Map(location=[25, 0], zoom_start=2, tiles="CartoDB positron", world_copy_jump=True, prefer_canvas=True)
     cluster = MarkerCluster(name="公司新聞來源國家").add_to(m)
 
     if articles is None or articles.empty or "source_country" not in articles.columns:
@@ -389,6 +389,22 @@ def build_company_news_map(articles: pd.DataFrame):
         ).add_to(cluster)
 
     folium.LayerControl().add_to(m)
+
+    # V7: fit the map to available company-news source countries.
+    coords_list = []
+    for country in articles["source_country"].dropna().unique():
+        country_name = str(country).strip()
+        coords = COUNTRY_COORDS.get(country_name) or COUNTRY_COORDS.get(country_name.title())
+        if coords:
+            coords_list.append(coords)
+
+    if coords_list:
+        if len(coords_list) == 1:
+            m.location = list(coords_list[0])
+            m.zoom_start = 4
+        else:
+            m.fit_bounds(coords_list, padding=(25, 25))
+
     return m
 
 
@@ -422,8 +438,8 @@ def build_relationship_graph(df: pd.DataFrame, max_events: int = 80) -> str:
     return html_path
 
 
-st.set_page_config(page_title="Global News Radar V6", layout="wide")
-st.title("🌍 Global News Radar V6：全球事件地圖 + 公司新聞搜尋")
+st.set_page_config(page_title="Global News Radar V7", layout="wide")
+st.title("🌍 Global News Radar V7：全球事件地圖 + 公司新聞搜尋")
 
 with st.sidebar:
     st.header("A. 全球事件地圖")
@@ -454,6 +470,7 @@ with st.sidebar:
     max_records = st.slider("最多新聞篇數", 5, 50, 10, step=5)
     translate_titles = st.checkbox("保留原文標題，並智慧翻譯成繁中", value=True)
     display_mode = st.radio("閱讀版型", ["手機卡片", "電腦表格"], index=0)
+    st.caption("V7：地圖拖曳時不回傳互動事件，減少忽暗忽亮；地圖啟用跨日期線跳轉。")
     search_button = st.button("搜尋公司新聞", type="primary")
 
 with st.spinner("正在抓取 GDELT 最新事件資料..."):
@@ -584,7 +601,7 @@ with tab_company_map:
         st.info("請先到左側 B 區按「搜尋公司新聞」，查到文章後這裡才會出現公司新聞地圖。")
     else:
         company_map = build_company_news_map(articles)
-        st_folium(company_map, width=None, height=680)
+        st_folium(company_map, width=None, height=680, returned_objects=[], key="company_news_map")
 
 with tab_map:
     st.subheader("事件地圖")
@@ -593,7 +610,7 @@ with tab_map:
         st.info("目前沒有符合條件的事件。若要查公司新聞，請切到「公司新聞」頁籤。")
     else:
         m = build_map(filtered.head(1000))
-        st_folium(m, width=None, height=680)
+        st_folium(m, width=None, height=680, returned_objects=[], key="event_map")
 
 with tab_table:
     st.subheader("事件明細")

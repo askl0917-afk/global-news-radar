@@ -1,17 +1,21 @@
-# Global News Radar V6
+# Global News Radar V7
 
-V6 improves translation and mobile reading.
+V7 improves the mobile map experience.
 
 ## What changed
 
-- Keeps the original headline, regardless of language.
-- Uses automatic language detection to translate headlines into Traditional Chinese.
-- No need to manually maintain 100 language-pair rules.
-- Adds a mobile card layout and a desktop table layout.
-- Keeps the Company News Map tab.
-- Company News Map uses `source_country` as approximate location.
-  - This is the news source country, not necessarily the real event location.
-- Event Map remains the original GDELT Event Database map for geopolitical/social events.
+- Prevents Streamlit reruns when dragging / zooming the Folium maps.
+  - This should reduce the annoying dim / bright flicker.
+- Enables Leaflet `worldCopyJump` to handle panning across the international date line.
+  - This helps when starting near Taiwan and sliding toward the United States.
+- Company News Map fits bounds to the available source-country markers.
+- Keeps original headline and Traditional Chinese translation.
+- Keeps mobile card view and desktop table view.
+
+## Important note about the company-news map
+
+The map uses `source_country` from GDELT DOC API.
+That means it shows the news source country, not necessarily the exact event location.
 
 ## Deploy on Streamlit Community Cloud
 
