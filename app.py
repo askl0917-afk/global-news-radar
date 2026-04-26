@@ -1,5 +1,6 @@
 import io
 import html
+import time
 import zipfile
 from urllib.parse import urlparse
 
@@ -148,8 +149,8 @@ def load_latest_events(num_files: int = 4, max_rows_per_file: int = 20000) -> pd
     return df.sort_values("event_time_utc", ascending=False)
 
 
-@st.cache_data(ttl=900, show_spinner=False)
-def search_company_news(query: str, timespan: str = "24h", max_records: int = 100) -> pd.DataFrame:
+@st.cache_data(ttl=1800, show_spinner=False)
+def search_company_news_cached(query: str, timespan: str = "24h", max_records: int = 50) -> pd.DataFrame:
     query = (query or "").strip()
     if not query:
         return pd.DataFrame()
@@ -163,10 +164,20 @@ def search_company_news(query: str, timespan: str = "24h", max_records: int = 10
         "timespan": timespan,
     }
 
+    headers = {
+        "User-Agent": "GlobalNewsRadarMVP/1.0 contact: user-streamlit-app"
+    }
+
     try:
-        r = requests.get(GDELT_DOC_API, params=params, timeout=30)
+        r = requests.get(GDELT_DOC_API, params=params, headers=headers, timeout=30)
+
+        if r.status_code == 429:
+            st.warning("GDELT DOC API 暫時限流 429。請等 5～10 分鐘再按搜尋，或把時間範圍 / 篇數調小。")
+            return pd.DataFrame()
+
         r.raise_for_status()
         data = r.json()
+
     except Exception as exc:
         st.warning(f"GDELT DOC API 查詢失敗：{exc}")
         return pd.DataFrame()
@@ -273,8 +284,8 @@ def build_relationship_graph(df: pd.DataFrame, max_events: int = 80) -> str:
     return html_path
 
 
-st.set_page_config(page_title="Global News Radar V2", layout="wide")
-st.title("🌍 Global News Radar V2：全球事件地圖 + 公司新聞搜尋")
+st.set_page_config(page_title="Global News Radar V3", layout="wide")
+st.title("🌍 Global News Radar V3：全球事件地圖 + 公司新聞搜尋")
 
 with st.sidebar:
     st.header("A. 全球事件地圖")
@@ -295,14 +306,15 @@ with st.sidebar:
     company_query = st.text_input(
         "新聞關鍵字",
         value='NVIDIA OR NVDA OR "Jensen Huang"',
-        help="查公司與財經新聞請用這個欄位，不要只用事件地圖的角色關鍵字。"
+        help="V3 改成手動按鈕搜尋，避免一刷新就打 API 被限流。"
     )
     timespan = st.selectbox(
         "新聞時間範圍",
         options=["1h", "6h", "12h", "24h", "3d", "7d"],
-        index=3
+        index=2
     )
-    max_records = st.slider("最多新聞篇數", 10, 250, 100, step=10)
+    max_records = st.slider("最多新聞篇數", 10, 100, 30, step=10)
+    search_button = st.button("搜尋公司新聞", type="primary")
 
 with st.spinner("正在抓取 GDELT 最新事件資料..."):
     events = load_latest_events(num_files=num_files, max_rows_per_file=max_rows)
@@ -326,8 +338,21 @@ if actor_filter.strip():
 
 filtered = filtered[filtered["NumMentions"].fillna(0) >= min_mentions]
 
-with st.spinner("正在搜尋公司 / 財經新聞..."):
-    articles = search_company_news(company_query, timespan=timespan, max_records=max_records)
+if "articles" not in st.session_state:
+    st.session_state["articles"] = pd.DataFrame()
+if "last_company_query" not in st.session_state:
+    st.session_state["last_company_query"] = ""
+
+if search_button:
+    with st.spinner("正在搜尋公司 / 財經新聞..."):
+        st.session_state["articles"] = search_company_news_cached(
+            company_query,
+            timespan=timespan,
+            max_records=max_records
+        )
+        st.session_state["last_company_query"] = company_query
+
+articles = st.session_state["articles"]
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("事件數", f"{len(filtered):,}")
@@ -339,11 +364,13 @@ tab_news, tab_map, tab_table, tab_graph = st.tabs(["公司新聞", "事件地圖
 
 with tab_news:
     st.subheader("公司 / 財經新聞搜尋")
-    st.caption("這裡查 GDELT DOC API 文章清單，比事件地圖更適合 NVIDIA、NVDA、TSMC、Tesla 這類公司新聞。")
+    st.caption("V3 版不會自動打公司新聞 API。請在左側設定關鍵字後，按「搜尋公司新聞」。")
 
     if articles.empty:
-        st.info("目前沒有查到公司新聞。可以放寬時間範圍，例如 24h → 3d，或改用 NVIDIA / NVDA / Jensen Huang 分別查。")
+        st.info("尚未搜尋，或目前沒有查到公司新聞。若看到 429，請等 5～10 分鐘再查，並把最多新聞篇數降到 30。")
     else:
+        st.success(f"查詢關鍵字：{st.session_state.get('last_company_query', '')}")
+
         c1, c2 = st.columns(2)
 
         with c1:

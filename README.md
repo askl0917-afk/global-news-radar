@@ -1,13 +1,12 @@
-# Global News Radar V2
+# Global News Radar V3
 
-V2 adds a company / financial news search tab using the GDELT DOC 2.0 API.
+V3 fixes repeated GDELT DOC API calls by making company news search manual.
 
-## Features
+## What changed
 
-- Global event map from GDELT 2.0 Event Database
-- Company / finance article search from GDELT DOC API
-- Event table
-- Actor-event-location relationship graph
+- Company news search only runs when the user presses the search button.
+- Default article count reduced to avoid 429 Too Many Requests.
+- Event map remains automatic.
 
 ## Deploy on Streamlit Community Cloud
 
