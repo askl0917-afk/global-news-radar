@@ -1,29 +1,33 @@
-# Global News Radar V17
+# Global News Radar V19
 
-V17 adds a selectable financial-news time range.
+V19 adds Groq API status checking and Groq finance-context translation.
 
 ## What changed
 
-- Added "財經新聞時間範圍":
-  - 最近 1 小時
-  - 最近 6 小時
-  - 最近 12 小時
-  - 最近 24 小時
-  - 最近 3 天
-  - 最近 7 天
-  - 不限時間
-- Google News RSS query gets a `when:` hint.
-- Results are also locally filtered by timestamp.
-- If a time range is selected, articles without timestamps are excluded.
-- Keeps V16 multi-keyword logic:
-  - 交集 AND
-  - 聯集 OR
-- Keeps importance-first sorting:
-  - A → B → C → D
-  - then source quality
-  - then recency
+- Adds Groq translation mode:
+  - Groq AI 財經翻譯優先
+  - 只用免費機翻
+  - 不翻譯只保留原文
+- Shows Groq API status on the main page and sidebar:
+  - Groq API：已啟用
+  - Groq API：未設定
+- If Groq key is not configured, app falls back to free machine translation.
+- Keeps V17 time range selection.
+- Keeps AND / OR keyword logic.
+- Keeps importance-first sorting.
 
-## Deploy on Streamlit Community Cloud
+## Streamlit Secrets
+
+Put this in Streamlit App Settings → Secrets:
+
+```toml
+GROQ_API_KEY = "gsk_your_key_here"
+GROQ_MODEL = "llama-3.1-8b-instant"
+```
+
+Do not put your key in GitHub or source code.
+
+## Deploy
 
 Main file path:
 
