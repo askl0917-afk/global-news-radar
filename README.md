@@ -1,31 +1,29 @@
-# Global News Radar V19
+# Global News Radar V21
 
-V19 adds Groq API status checking and Groq finance-context translation.
+V21 adds natural-language research search powered by Groq.
 
 ## What changed
 
-- Adds Groq translation mode:
-  - Groq AI 財經翻譯優先
-  - 只用免費機翻
-  - 不翻譯只保留原文
-- Shows Groq API status on the main page and sidebar:
-  - Groq API：已啟用
-  - Groq API：未設定
-- If Groq key is not configured, app falls back to free machine translation.
-- Keeps V17 time range selection.
-- Keeps AND / OR keyword logic.
-- Keeps importance-first sorting.
+- New search mode:
+  - 自然語言研究搜尋
+  - 精準關鍵字
+- Natural-language mode asks Groq to convert a research question into:
+  - focused Google News queries
+  - related US tickers
+  - include/exclude concepts
+  - a short search-strategy explanation
+- Example:
+  - "AI 軟硬體產業最近有哪些重要新聞？"
+  - becomes searches around AI chips, AI servers, data centers, enterprise AI, cloud capex, HBM, networking, cooling, etc.
+- Keeps Groq finance-context translation and translation diagnostics.
+- Keeps time-range filtering and importance-first sorting.
 
 ## Streamlit Secrets
 
-Put this in Streamlit App Settings → Secrets:
-
 ```toml
 GROQ_API_KEY = "gsk_your_key_here"
-GROQ_MODEL = "llama-3.1-8b-instant"
+GROQ_MODEL = "llama-3.3-70b-versatile"
 ```
-
-Do not put your key in GitHub or source code.
 
 ## Deploy
 

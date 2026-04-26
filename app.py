@@ -1,6 +1,7 @@
 
 import html
 import io
+import json
 import os
 import re
 import zipfile
@@ -21,7 +22,7 @@ from streamlit_folium import st_folium
 
 
 # ============================================================
-# Global News Radar V19
+# Global News Radar V21
 # 投資情報雷達穩定版
 #
 # What changed:
@@ -366,11 +367,159 @@ def get_groq_model():
             return model
     except Exception:
         pass
-    return os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+    return os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 
 def groq_is_enabled():
     return bool(get_groq_api_key())
+
+
+def default_search_plan(user_query: str) -> dict:
+    """Fallback when Groq is not available."""
+    q = clean_text(user_query)
+    terms = parse_search_terms(q)
+    if not terms:
+        terms = [q] if q else []
+
+    return {
+        "mode": "fallback",
+        "core_topic_zh": q,
+        "search_queries": terms[:6] if terms else [q],
+        "tickers": [],
+        "include_terms": terms,
+        "exclude_terms": [],
+        "reason": "未啟用 Groq 或 Groq 解析失敗，因此使用原始關鍵字搜尋。",
+    }
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def groq_build_search_plan(user_query: str, time_range: str = "最近 24 小時") -> dict:
+    """Use Groq to turn a natural-language research request into search queries.
+
+    Output is JSON so the app can execute several focused RSS searches.
+    """
+    user_query = clean_text(user_query)
+    if not user_query:
+        return default_search_plan(user_query)
+
+    api_key = get_groq_api_key()
+    if not api_key:
+        return default_search_plan(user_query)
+
+    system_prompt = """
+你是台灣買方/賣方科技產業分析師的搜尋助理。
+你要把使用者的自然語言研究問題，轉成適合 Google News RSS / Yahoo Finance RSS 的搜尋策略。
+
+請只輸出 JSON，不要 markdown，不要解釋。
+
+JSON 格式：
+{
+  "core_topic_zh": "繁體中文核心主題",
+  "search_queries": ["英文搜尋字串1", "英文搜尋字串2", "...最多8個"],
+  "tickers": ["NVDA", "AMD", "...最多10個"],
+  "include_terms": ["必須關注的概念"],
+  "exclude_terms": ["要避開的雜訊"],
+  "reason": "用繁中一句話說明為何這樣拆"
+}
+
+規則：
+1. search_queries 要用英文，因為 Google News / Yahoo Finance 英文財經新聞較完整。
+2. 每個 query 不要太長，適合新聞搜尋。
+3. 如果使用者問 AI 軟硬體產業，要涵蓋：
+   - AI chips / GPU / CPU / accelerator
+   - AI servers / data centers / cloud capex
+   - AI software / enterprise AI / inference
+   - semiconductor supply chain / memory / HBM / networking / power / cooling
+4. 若問題涉及股票或公司，tickers 放美股 ticker；台股可先不放 ticker。
+5. 避免過度寬泛，只給最可能抓到財經新聞的查詢。
+6. 不要把使用者問題翻成中文查詢；主要查英文。
+""".strip()
+
+    user_prompt = f"""
+使用者問題：{user_query}
+時間範圍：{time_range}
+請產生搜尋策略 JSON：
+""".strip()
+
+    try:
+        client = Groq(api_key=api_key)
+        completion = client.chat.completions.create(
+            model=get_groq_model(),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.1,
+            max_tokens=700,
+        )
+        raw = completion.choices[0].message.content.strip()
+        raw = raw.strip("`").strip()
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+
+        data = json.loads(raw)
+
+        queries = data.get("search_queries", [])
+        if not isinstance(queries, list):
+            queries = [str(queries)]
+        queries = [clean_text(q) for q in queries if clean_text(q)][:8]
+
+        tickers = data.get("tickers", [])
+        if not isinstance(tickers, list):
+            tickers = [str(tickers)]
+        tickers = [clean_text(t).upper() for t in tickers if clean_text(t)][:10]
+
+        return {
+            "mode": "groq",
+            "core_topic_zh": clean_text(data.get("core_topic_zh", user_query)),
+            "search_queries": queries or [user_query],
+            "tickers": tickers,
+            "include_terms": data.get("include_terms", []),
+            "exclude_terms": data.get("exclude_terms", []),
+            "reason": clean_text(data.get("reason", "Groq 已將自然語言問題拆成多個財經新聞搜尋式。")),
+        }
+    except Exception as exc:
+        plan = default_search_plan(user_query)
+        plan["reason"] = f"Groq 搜尋策略解析失敗，改用原始關鍵字。原因：{exc}"
+        return plan
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def apply_finance_translation_guardrails(original: str, translated: str) -> str:
+    """Fix common finance-headline mistranslations.
+
+    This is not a full translator. It only prevents known harmful mistranslations
+    that can mislead investment interpretation.
+    """
+    original_clean = clean_text(original)
+    out = clean_text(translated)
+
+    lower = original_clean.lower()
+
+    # Very common idiom failure:
+    # "X crashes Y's party" means X intrudes / steals the spotlight,
+    # not defeats a party.
+    if "crash" in lower and "party" in lower:
+        out = out.replace("擊敗英特爾派對", "搶走英特爾的風頭")
+        out = out.replace("擊敗 Intel 派對", "搶走 Intel 的風頭")
+        out = out.replace("擊敗英特爾的派對", "搶走英特爾的風頭")
+        out = out.replace("擊敗派對", "搶風頭")
+        out = out.replace("英特爾派對", "英特爾的慶功派對")
+
+        if "擊敗" in out and "party" in lower:
+            # If model still produced a misleading defeat-style sentence,
+            # fall back to a safer editorial rewrite.
+            out = "輝達搶走英特爾的風頭：AI CPU 題材升溫，5 兆美元巨頭股價大漲"
+
+    if "market pivots to cpus" in lower or "pivots to cpus" in lower:
+        out = out.replace("AI 市場轉向 CPU", "AI 市場重新重視 CPU 題材")
+        out = out.replace("AI市場轉向CPU", "AI 市場重新重視 CPU 題材")
+        out = out.replace("轉向 CPU", "重新重視 CPU 題材")
+        out = out.replace("轉向CPU", "重新重視 CPU 題材")
+
+    out = out.replace("5T", "5 兆美元").replace("5t", "5 兆美元")
+    out = out.replace("巨頭飆升", "巨頭股價大漲")
+    return out[:240]
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -384,19 +533,31 @@ def groq_finance_translate_title(title: str, domain: str = "", category: str = "
     if not api_key:
         return ""
 
-    system_prompt = (
-        "你是台灣財經新聞標題編輯。"
-        "請把英文或多語財經新聞標題翻成適合台灣股票分析師閱讀的繁體中文。"
-        "你必須保留財經語境、公司名、ticker 意義，避免直翻英文慣用語。"
-        "例如 crash a party 是闖進派對/搶風頭，不是擊敗派對。"
-        "market pivots to CPUs 不要翻成 AI 完全轉向 CPU，應理解為市場重新重視 CPU 題材或 CPU 敘事升溫。"
-        "只輸出一行中文標題，不要解釋。"
-    )
+    system_prompt = """
+你是台灣財經新聞標題編輯，不是一般翻譯機。
+任務：把原文標題改寫成「台灣股票分析師一眼看得懂」的繁體中文財經標題。
+
+硬性規則：
+- 只輸出一行中文標題，不要解釋、不要引號、不要項目符號。
+- 不要新增原文沒有的事實或數字。
+- 公司名要用台灣常用名稱：Nvidia=輝達，Intel=英特爾，AMD=超微，Arm=安謀。
+- crash a party / crashes Intel’s party = 闖進派對、搶風頭，不是「擊敗派對」。
+- market pivots to CPUs = 市場重新重視 CPU 題材 / CPU 敘事升溫，不是 GPU 不重要，也不是 AI 市場完全轉向 CPU。
+- 5T giant = 5 兆美元巨頭。
+- surges = 股價大漲 / 市值拉升，視上下文選擇。
+- 如果標題是媒體誇飾，要翻成財經語境，不要照字面誤導。
+
+範例：
+原文：Nvidia crashes Intel’s party: $5T giant surges as AI market pivots to CPUs
+好翻譯：Intel 財報點燃 CPU 題材，但輝達也來搶風頭：AI 推論讓市場重新重視 CPU 價值
+壞翻譯：Nvidia 擊敗英特爾派對
+""".strip()
 
     user_prompt = f"""
 來源網域：{domain}
 初步分類：{category}
 原文標題：{title}
+請輸出繁體中文財經標題：
 """.strip()
 
     try:
@@ -407,14 +568,15 @@ def groq_finance_translate_title(title: str, domain: str = "", category: str = "
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.2,
-            max_tokens=180,
+            temperature=0.0,
+            max_tokens=220,
         )
         result = completion.choices[0].message.content
         result = clean_text(result)
-        return result[:220]
+        return apply_finance_translation_guardrails(title, result)
     except Exception:
         return ""
+
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -433,21 +595,34 @@ def machine_translate_title_to_zh_tw(title: str) -> str:
         return ""
 
 
-def translate_title_to_zh_tw(title: str, domain: str = "", category: str = "", translation_mode: str = "Groq AI 財經翻譯優先") -> str:
+def translate_title_with_engine(title: str, domain: str = "", category: str = "", translation_mode: str = "Groq AI 財經翻譯優先") -> dict:
     title = clean_text(title)
     if not title:
-        return ""
+        return {"text": "", "engine": "無"}
 
     if translation_mode == "Groq AI 財經翻譯優先":
         groq_result = groq_finance_translate_title(title, domain=domain, category=category)
         if groq_result:
-            return groq_result
-        return machine_translate_title_to_zh_tw(title)
+            return {"text": groq_result, "engine": f"Groq AI｜{get_groq_model()}"}
+
+        mt = machine_translate_title_to_zh_tw(title)
+        return {
+            "text": apply_finance_translation_guardrails(title, mt) if mt else "",
+            "engine": "免費機翻備援",
+        }
 
     if translation_mode == "只用免費機翻":
-        return machine_translate_title_to_zh_tw(title)
+        mt = machine_translate_title_to_zh_tw(title)
+        return {
+            "text": apply_finance_translation_guardrails(title, mt) if mt else "",
+            "engine": "免費機翻",
+        }
 
-    return ""
+    return {"text": "", "engine": "不翻譯"}
+
+
+def translate_title_to_zh_tw(title: str, domain: str = "", category: str = "", translation_mode: str = "Groq AI 財經翻譯優先") -> str:
+    return translate_title_with_engine(title, domain=domain, category=category, translation_mode=translation_mode).get("text", "")
 
 
 
@@ -644,8 +819,8 @@ def enrich_articles(df: pd.DataFrame, translate_titles: bool, translation_mode: 
     df["category"] = df["title"].apply(classify_news)
 
     if translate_titles:
-        df["title_zh"] = df.apply(
-            lambda row: translate_title_to_zh_tw(
+        translations = df.apply(
+            lambda row: translate_title_with_engine(
                 row.get("title", ""),
                 domain=row.get("domain", ""),
                 category=row.get("category", ""),
@@ -653,8 +828,11 @@ def enrich_articles(df: pd.DataFrame, translate_titles: bool, translation_mode: 
             ),
             axis=1,
         )
+        df["title_zh"] = translations.apply(lambda x: x.get("text", ""))
+        df["translation_engine"] = translations.apply(lambda x: x.get("engine", "未知"))
     else:
         df["title_zh"] = ""
+        df["translation_engine"] = "不翻譯"
 
     df["importance"] = df.apply(importance_score, axis=1)
 
@@ -678,33 +856,44 @@ def search_finance_news(
     query_logic: str = "交集 AND",
     time_range: str = "最近 24 小時",
     translation_mode: str = "Groq AI 財經翻譯優先",
+    search_mode: str = "精準關鍵字",
+    query_plan: dict | None = None,
 ) -> pd.DataFrame:
     frames = []
-    query_list = build_query_by_logic(query, query_logic)
+
+    if search_mode == "自然語言研究搜尋" and query_plan:
+        query_list = query_plan.get("search_queries", []) or [query]
+        tickers = query_plan.get("tickers", []) or []
+    else:
+        query_list = build_query_by_logic(query, query_logic)
+        tickers = []
 
     if use_google:
-        # In OR mode, search each keyword separately then combine.
-        # In AND mode, search all keywords together.
+        # Natural-language mode searches several AI-expanded queries and merges results.
+        # Keyword mode follows AND / OR logic.
         per_query_limit = max(5, int(max_items / max(1, len(query_list))))
-        for q in query_list:
+        for q in query_list[:8]:
             frames.append(fetch_google_news_rss(q, max_items=per_query_limit, preferred_domains=preferred_domains, time_range=time_range))
 
     if use_yahoo:
-        # Yahoo Finance RSS is ticker-based.
-        # In OR mode, fetch each ticker separately.
-        # In AND mode, Yahoo cannot express "NVIDIA AND Intel" well, so we only use Google to avoid single-company contamination.
-        if query_logic == "聯集 OR":
-            for term in parse_search_terms(query):
-                ticker = infer_ticker(term)
-                if ticker:
-                    frames.append(fetch_yahoo_finance_rss(ticker, max_items=max(5, int(max_items / max(1, len(query_list))))))
+        if search_mode == "自然語言研究搜尋":
+            for ticker in tickers[:10]:
+                frames.append(fetch_yahoo_finance_rss(ticker, max_items=max(5, int(max_items / max(1, len(tickers) or 1)))))
         else:
-            # If there is only one term, Yahoo ticker RSS is still useful.
-            terms = parse_search_terms(query)
-            if len(terms) == 1:
-                ticker = infer_ticker(query)
-                if ticker:
-                    frames.append(fetch_yahoo_finance_rss(ticker, max_items=max_items))
+            # Yahoo Finance RSS is ticker-based.
+            # In OR mode, fetch each ticker separately.
+            # In AND mode, Yahoo cannot express "NVIDIA AND Intel" well, so only use Yahoo for single ticker queries.
+            if query_logic == "聯集 OR":
+                for term in parse_search_terms(query):
+                    ticker = infer_ticker(term)
+                    if ticker:
+                        frames.append(fetch_yahoo_finance_rss(ticker, max_items=max(5, int(max_items / max(1, len(query_list))))))
+            else:
+                terms = parse_search_terms(query)
+                if len(terms) == 1:
+                    ticker = infer_ticker(query)
+                    if ticker:
+                        frames.append(fetch_yahoo_finance_rss(ticker, max_items=max_items))
 
     frames = [f for f in frames if f is not None and not f.empty]
     if not frames:
@@ -846,6 +1035,7 @@ def build_unified_feed(articles: pd.DataFrame, events: pd.DataFrame) -> pd.DataF
                 "location": r.get("source_country", ""),
                 "language": r.get("language", ""),
                 "url": r.get("url", ""),
+                "translation_engine": r.get("translation_engine", ""),
                 "category": r.get("category", ""),
                 "importance": r.get("importance", ""),
                 "lat": COUNTRY_COORDS.get(r.get("source_country", ""), (None, None))[0],
@@ -1033,7 +1223,7 @@ def build_graph(feed: pd.DataFrame) -> str:
 # UI
 # -------------------------------
 
-st.set_page_config(page_title="Global News Radar V19", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Global News Radar V21", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -1102,14 +1292,29 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V19：投資情報雷達穩定版")
+st.title("🌍 Global News Radar V21：投資情報雷達穩定版")
 
 with st.sidebar:
     st.header("搜尋")
-    query = st.text_input("關鍵字 / 公司 / 人名", value="NVIDIA")
-    query_logic = st.radio("多關鍵字邏輯", ["交集 AND", "聯集 OR"], index=0, help="例：NVIDIA intel。交集=同時找兩者相關；聯集=分別找 NVIDIA 與 Intel 後合併。")
+    search_mode = st.radio(
+        "搜尋模式",
+        ["自然語言研究搜尋", "精準關鍵字"],
+        index=0,
+        help="自然語言模式會先用 Groq 把問題拆成多個財經新聞搜尋式；精準關鍵字則照你輸入的字查。"
+    )
+    if search_mode == "自然語言研究搜尋":
+        query = st.text_area(
+            "研究問題",
+            value="AI 軟硬體產業最近有哪些重要新聞？",
+            height=90,
+        )
+        st.caption("例：AI 軟硬體產業最近有哪些重要新聞？ / 最近 AI 伺服器供應鏈有什麼變化？ / NVIDIA、Intel、AMD 在 AI CPU/GPU 的新聞")
+        query_logic = "聯集 OR"
+    else:
+        query = st.text_input("關鍵字 / 公司 / 人名", value="NVIDIA")
+        query_logic = st.radio("多關鍵字邏輯", ["交集 AND", "聯集 OR"], index=0, help="例：NVIDIA intel。交集=同時找兩者相關；聯集=分別找 NVIDIA 與 Intel 後合併。")
     time_range = st.selectbox("財經新聞時間範圍", ["最近 1 小時", "最近 6 小時", "最近 12 小時", "最近 24 小時", "最近 3 天", "最近 7 天", "不限時間"], index=3)
-    max_items = st.slider("最多新聞篇數", 5, 50, 20, step=5)
+    max_items = st.slider("最多新聞篇數", 5, 80, 30, step=5)
     translate_titles = st.checkbox("原文標題 + 智慧翻譯成繁中", value=True)
     translation_mode = st.radio(
         "翻譯模式",
@@ -1121,6 +1326,17 @@ with st.sidebar:
         st.success(f"Groq API：已啟用｜模型：{get_groq_model()}")
     else:
         st.warning("Groq API：未設定。目前會退回免費機翻或原文。")
+
+    with st.expander("測試 Groq 翻譯"):
+        test_title = st.text_input(
+            "測試標題",
+            value="Nvidia crashes Intel’s party: $5T giant surges as AI market pivots to CPUs",
+            key="groq_test_title",
+        )
+        if st.button("執行翻譯測試", key="run_groq_test"):
+            test = translate_title_with_engine(test_title, domain="investing.com", category="AI / 半導體", translation_mode=translation_mode)
+            st.write(f"翻譯來源：{test.get('engine')}")
+            st.write(test.get("text"))
 
     st.divider()
     st.subheader("財經新聞來源")
@@ -1157,6 +1373,8 @@ if "last_feed" not in st.session_state:
     st.session_state["last_feed"] = pd.DataFrame()
 if "last_success_query" not in st.session_state:
     st.session_state["last_success_query"] = ""
+if "last_query_plan" not in st.session_state:
+    st.session_state["last_query_plan"] = {}
 
 # Load GDELT events separately. Even if news fails, events can still work.
 events_all = pd.DataFrame()
@@ -1168,7 +1386,14 @@ if use_gdelt_events:
             st.info(f"GDELT 全球事件補充暫時無法讀取：{exc}")
 
 if search_button:
-    with st.spinner("正在搜尋財經新聞..."):
+    with st.spinner("正在建立搜尋策略與搜尋財經新聞..."):
+        query_plan = None
+        if search_mode == "自然語言研究搜尋":
+            query_plan = groq_build_search_plan(query, time_range=time_range)
+            st.session_state["last_query_plan"] = query_plan
+        else:
+            st.session_state["last_query_plan"] = default_search_plan(query)
+
         articles = search_finance_news(
             query=query,
             max_items=max_items,
@@ -1179,6 +1404,8 @@ if search_button:
             query_logic=query_logic,
             time_range=time_range,
             translation_mode=translation_mode,
+            search_mode=search_mode,
+            query_plan=query_plan,
         )
 
         if not articles.empty:
@@ -1206,11 +1433,22 @@ col4.metric("事件原始數", f"{len(events_all):,}")
 if st.session_state.get("last_success_query"):
     st.caption(f"上次成功查詢：{st.session_state['last_success_query']}｜目前選擇時間範圍：{time_range}")
 
+plan = st.session_state.get("last_query_plan", {})
+if plan:
+    with st.expander("AI 搜尋策略", expanded=False):
+        st.markdown(f"**核心主題：** {plan.get('core_topic_zh', '')}")
+        st.markdown(f"**拆解理由：** {plan.get('reason', '')}")
+        st.markdown("**實際搜尋式：**")
+        for q in plan.get("search_queries", []):
+            st.code(q, language="text")
+        if plan.get("tickers"):
+            st.markdown("**相關 ticker：** " + ", ".join(plan.get("tickers", [])))
+
 tab_feed, tab_map, tab_graph, tab_raw = st.tabs(["統合新聞流", "統合地圖", "關係圖", "原始資料"])
 
 with tab_feed:
     st.subheader("統合新聞流")
-    st.caption("V19：若 Groq API 已設定，會用 Groq 開源 AI 做財經語境翻譯；未設定時退回免費機翻。")
+    st.caption("V21：自然語言模式會先用 Groq 產生搜尋策略，再抓 Google News / Yahoo Finance，適合用研究問題搜尋。")
 
     if feed.empty:
         st.info("尚未查到資料。請打開側欄設定關鍵字後按「更新統合新聞流」。")
@@ -1228,6 +1466,7 @@ with tab_feed:
                 quality = html.escape(str(row.get("source_quality", "")))
                 category = html.escape(str(row.get("category", "")))
                 importance = html.escape(str(row.get("importance", "")))
+                translation_engine = html.escape(str(row.get("translation_engine", "")))
                 summary = html.escape(str(row.get("summary", "")))
 
                 title_html = title
@@ -1250,7 +1489,7 @@ with tab_feed:
                         <div class="article-type">{dtype}｜{category}｜重要性 {importance}</div>
                         <div class="article-zh">{main_label}：{title_zh}</div>
                         <div class="article-original">{original_label}：{title_html}</div>
-                        <div class="article-meta">{time_utc}<br>{domain}｜{location}｜{quality}<br>{summary}</div>
+                        <div class="article-meta">{time_utc}<br>{domain}｜{location}｜{quality}<br>翻譯來源：{translation_engine}<br>{summary}</div>
                         <div class="article-meta"><b>判斷：</b>{hint}</div>
                         <div class="article-source"><a href="{url_safe}" target="_blank">打開來源</a></div>
                     </div>
