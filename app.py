@@ -22,7 +22,7 @@ from streamlit_folium import st_folium
 
 
 # ============================================================
-# Global News Radar V21
+# Global News Radar V22
 # 投資情報雷達穩定版
 #
 # What changed:
@@ -1188,6 +1188,208 @@ def build_world_map(feed: pd.DataFrame, show_news=True, show_events=True):
     return m
 
 
+# -------------------------------
+# V22 Industry relationship graph
+# -------------------------------
+
+COMPANY_CANON = {
+    "nvidia": "Nvidia", "nvda": "Nvidia", "輝達": "Nvidia",
+    "intel": "Intel", "intc": "Intel", "英特爾": "Intel",
+    "amd": "AMD", "超微": "AMD",
+    "arm": "Arm", "安謀": "Arm",
+    "qualcomm": "Qualcomm", "qcom": "Qualcomm", "高通": "Qualcomm",
+    "apple": "Apple", "aapl": "Apple", "蘋果": "Apple",
+    "amazon": "Amazon", "aws": "AWS", "amzn": "Amazon",
+    "microsoft": "Microsoft", "azure": "Azure", "msft": "Microsoft",
+    "google": "Google", "alphabet": "Google", "googl": "Google",
+    "meta": "Meta", "oracle": "Oracle", "orcl": "Oracle",
+    "tsmc": "TSMC", "台積電": "TSMC",
+    "samsung": "Samsung", "三星": "Samsung",
+    "supermicro": "Supermicro", "smci": "Supermicro",
+    "dell": "Dell", "hpe": "HPE", "hewlett packard": "HPE", "lenovo": "Lenovo",
+    "micron": "Micron", "mu": "Micron", "sk hynix": "SK hynix",
+    "broadcom": "Broadcom", "avgo": "Broadcom", "marvell": "Marvell", "mrvl": "Marvell",
+}
+
+COMPANY_LAYER = {
+    "Arm": "上游 IP / 架構", "TSMC": "上游製造 / 代工", "Samsung": "上游製造 / 代工",
+    "Intel": "中游晶片 / CPU", "AMD": "中游晶片 / CPU", "Nvidia": "中游晶片 / AI 平台",
+    "Qualcomm": "中游晶片 / AI PC", "Apple": "終端 / 自研晶片",
+    "Amazon": "下游雲端 / CSP", "AWS": "下游雲端 / CSP", "Microsoft": "下游雲端 / CSP",
+    "Azure": "下游雲端 / CSP", "Google": "下游雲端 / CSP", "Meta": "下游雲端 / CSP", "Oracle": "下游雲端 / CSP",
+    "Supermicro": "平台 / 伺服器 OEM", "Dell": "平台 / 伺服器 OEM", "HPE": "平台 / 伺服器 OEM", "Lenovo": "平台 / 伺服器 OEM",
+    "Micron": "上游記憶體 / HBM", "SK hynix": "上游記憶體 / HBM", "Broadcom": "網通 / ASIC", "Marvell": "網通 / ASIC",
+}
+
+TOPIC_KEYWORDS = {
+    "AI inference": ["inference", "ai inference", "推論"],
+    "Server CPU": ["server cpu", "data center cpu", "xeon", "epyc", "伺服器 cpu", "cpu"],
+    "AI PC": ["ai pc", "copilot+ pc", "npu", "pc cpu"],
+    "CPU + GPU 平台": ["grace", "vera", "superchip", "accelerated computing", "cpu-gpu"],
+    "x86 vs Arm": ["x86", "arm server", "custom silicon", "arm-based"],
+    "Cloud capex": ["capex", "cloud spending", "data center spending", "hyperscaler"],
+    "AI server": ["ai server", "ai servers", "data center", "datacenter"],
+    "HBM / Memory": ["hbm", "memory", "dram", "micron", "sk hynix"],
+    "Networking": ["networking", "ethernet", "switch", "infiniband", "optical"],
+    "Power / Cooling": ["power", "cooling", "liquid cooling", "thermal"],
+    "Export control": ["export control", "ban", "restriction", "china", "license"],
+    "Earnings / Guidance": ["earnings", "guidance", "revenue", "margin", "quarter"],
+}
+
+COMPETITION_PAIRS = {
+    tuple(sorted(["Intel", "AMD"])): "x86 server CPU / PC CPU 競爭",
+    tuple(sorted(["Intel", "Nvidia"])): "AI inference / CPU-GPU 平台敘事競爭",
+    tuple(sorted(["AMD", "Nvidia"])): "AI data center platform 競爭",
+    tuple(sorted(["Arm", "Intel"])): "Arm server / x86 架構替代威脅",
+    tuple(sorted(["Arm", "AMD"])): "Arm server / x86 架構替代威脅",
+    tuple(sorted(["Qualcomm", "Intel"])): "AI PC CPU 競爭",
+    tuple(sorted(["Qualcomm", "AMD"])): "AI PC CPU 競爭",
+    tuple(sorted(["Google", "Amazon"])): "雲端 AI 基建 / 自研晶片競爭",
+    tuple(sorted(["Microsoft", "Google"])): "雲端 AI 基建競爭",
+    tuple(sorted(["Microsoft", "Amazon"])): "雲端 AI 基建競爭",
+}
+
+SUPPLY_CHAIN_EDGES = [
+    ("Arm", "Qualcomm", "供應 / IP 架構"), ("Arm", "Amazon", "供應 / IP 架構"), ("Arm", "Apple", "供應 / IP 架構"),
+    ("TSMC", "AMD", "供應 / 代工"), ("TSMC", "Nvidia", "供應 / 代工"), ("TSMC", "Apple", "供應 / 代工"),
+    ("Samsung", "Nvidia", "供應 / 記憶體/製造"), ("Micron", "Nvidia", "供應 / HBM 記憶體"), ("SK hynix", "Nvidia", "供應 / HBM 記憶體"),
+    ("Intel", "Dell", "客戶 / 平台導入"), ("AMD", "Dell", "客戶 / 平台導入"),
+    ("Nvidia", "Supermicro", "客戶 / 平台導入"), ("Intel", "Supermicro", "客戶 / 平台導入"), ("AMD", "Supermicro", "客戶 / 平台導入"),
+    ("Intel", "AWS", "客戶 / 雲端需求"), ("AMD", "AWS", "客戶 / 雲端需求"), ("Nvidia", "AWS", "客戶 / 雲端需求"),
+    ("Intel", "Azure", "客戶 / 雲端需求"), ("AMD", "Azure", "客戶 / 雲端需求"), ("Nvidia", "Azure", "客戶 / 雲端需求"),
+    ("Intel", "Google", "客戶 / 雲端需求"), ("AMD", "Google", "客戶 / 雲端需求"), ("Nvidia", "Google", "客戶 / 雲端需求"),
+]
+
+def extract_companies_from_text(text: str) -> list:
+    t = (text or "").lower()
+    found, seen = [], set()
+    for key, canon in COMPANY_CANON.items():
+        pattern = r"\b" + re.escape(key.lower()) + r"\b" if key.isascii() else re.escape(key.lower())
+        if re.search(pattern, t) and canon not in seen:
+            seen.add(canon); found.append(canon)
+    return found
+
+def extract_topics_from_text(text: str) -> list:
+    t = (text or "").lower()
+    return [topic for topic, keys in TOPIC_KEYWORDS.items() if any(k.lower() in t for k in keys)]
+
+def short_evidence_title(row) -> str:
+    title = str(row.get("title_zh") or row.get("title") or "")
+    return re.sub(r"\s+", " ", title).strip()[:120]
+
+def build_industry_relationships(feed: pd.DataFrame, max_news: int = 80):
+    if feed is None or feed.empty:
+        return pd.DataFrame(), pd.DataFrame(), {}
+    work = feed.copy().head(max_news)
+    node_counts, node_types, node_layers, edge_evidence = {}, {}, {}, {}
+
+    def add_node(node, ntype, layer=""):
+        if not node: return
+        node_counts[node] = node_counts.get(node, 0) + 1
+        node_types[node] = ntype
+        if layer: node_layers[node] = layer
+
+    def add_edge(src, dst, relation, evidence):
+        if not src or not dst or src == dst: return
+        key = (src, dst, relation)
+        edge_evidence.setdefault(key, [])
+        if evidence and evidence not in edge_evidence[key]: edge_evidence[key].append(evidence)
+
+    for _, row in work.iterrows():
+        text = " ".join([str(row.get("title", "")), str(row.get("title_zh", "")), str(row.get("category", "")), str(row.get("summary", ""))])
+        evidence = short_evidence_title(row)
+        companies = extract_companies_from_text(text)
+        topics = extract_topics_from_text(text)
+        for c in companies: add_node(c, "公司", COMPANY_LAYER.get(c, "公司"))
+        for tp in topics: add_node(tp, "主題 / 技術", "主題")
+        for c in companies:
+            for tp in topics: add_edge(tp, c, "事件影響 / 題材關聯", evidence)
+        for i in range(len(companies)):
+            for j in range(i+1, len(companies)):
+                pair = tuple(sorted([companies[i], companies[j]]))
+                if pair in COMPETITION_PAIRS:
+                    a,b = pair; add_edge(a, b, "競爭：" + COMPETITION_PAIRS[pair], evidence)
+        present = set(companies)
+        for src, dst, rel in SUPPLY_CHAIN_EDGES:
+            if src in present and dst in present: add_edge(src, dst, rel, evidence)
+
+    appeared = {n for n,t in node_types.items() if t == "公司"}
+    for src, dst, rel in SUPPLY_CHAIN_EDGES:
+        if src in appeared and dst in appeared: add_edge(src, dst, rel, "產業字典關係：需搭配新聞確認")
+    for pair, rel in COMPETITION_PAIRS.items():
+        a,b = pair
+        if a in appeared and b in appeared: add_edge(a, b, "競爭：" + rel, "產業字典關係：需搭配新聞確認")
+
+    nodes = [{"node":n, "type":node_types.get(n,""), "layer":node_layers.get(n,""), "count":c} for n,c in node_counts.items()]
+    edges = [{"source":s, "target":d, "relation":r, "strength":len(evs), "evidence":"｜".join(evs[:5])} for (s,d,r),evs in edge_evidence.items()]
+    nodes_df = pd.DataFrame(nodes).sort_values(["count","node"], ascending=[False, True]) if nodes else pd.DataFrame()
+    edges_df = pd.DataFrame(edges).sort_values(["strength","relation"], ascending=[False, True]) if edges else pd.DataFrame()
+    summary = {
+        "top_companies": nodes_df[nodes_df["type"]=="公司"].head(8)["node"].tolist() if not nodes_df.empty else [],
+        "top_topics": nodes_df[nodes_df["type"]=="主題 / 技術"].head(8)["node"].tolist() if not nodes_df.empty else [],
+        "top_relations": edges_df.head(8).to_dict("records") if not edges_df.empty else [],
+    }
+    return nodes_df, edges_df, summary
+
+def draw_industry_graph(nodes_df: pd.DataFrame, edges_df: pd.DataFrame, mode: str = "全部關係") -> str:
+    if nodes_df is None or nodes_df.empty: return ""
+    e = edges_df.copy() if edges_df is not None and not edges_df.empty else pd.DataFrame(columns=["source","target","relation","strength","evidence"])
+    if mode == "供應鏈圖": e = e[e["relation"].str.contains("供應|客戶|代工|平台|雲端", na=False)]
+    elif mode == "競爭圖": e = e[e["relation"].str.contains("競爭|替代|威脅", na=False)]
+    elif mode == "事件傳導圖": e = e[e["relation"].str.contains("事件影響|題材", na=False)]
+    e = e.head(35)
+    active_nodes = set(e["source"].tolist() + e["target"].tolist()) if not e.empty else set(nodes_df.head(20)["node"].tolist())
+    n = nodes_df[nodes_df["node"].isin(active_nodes)].head(28)
+    net = Network(height="650px", width="100%", bgcolor="#ffffff", font_color="#222222", directed=True)
+    net.barnes_hut(gravity=-26000, central_gravity=0.2, spring_length=180, spring_strength=0.02, damping=0.88)
+    color_map = {"公司":"#2f80ed", "主題 / 技術":"#9b51e0", "產業鏈位置":"#27ae60", "新聞事件":"#f2994a"}
+    for _, row in n.iterrows():
+        node, ntype, layer, count = row["node"], row.get("type",""), row.get("layer",""), int(row.get("count",1))
+        net.add_node(node, label=node, title=f"{node}<br>類型：{ntype}<br>位置：{layer}<br>提及次數：{count}", color=color_map.get(ntype,"#828282"), size=16+min(count*3,20), group=ntype)
+    edge_color = {"競爭":"#eb5757", "供應":"#2f80ed", "客戶":"#27ae60", "事件影響":"#f2994a", "題材":"#f2994a"}
+    for _, row in e.iterrows():
+        src, dst, rel = row["source"], row["target"], str(row.get("relation",""))
+        color = "#828282"
+        for key,c in edge_color.items():
+            if key in rel: color = c; break
+        width = 1 + min(int(row.get("strength",1)),5)
+        title = f"{rel}<br>強度：{row.get('strength',1)}<br>{html.escape(str(row.get('evidence','')))}"
+        net.add_edge(src, dst, title=title, label=rel[:10], color=color, width=width)
+    net.toggle_physics(True)
+    path = f"industry_graph_{mode}.html".replace("/", "_")
+    net.save_graph(path)
+    return path
+
+def render_industry_relationship_page(feed: pd.DataFrame):
+    st.subheader("產業關係圖")
+    st.caption("V22：關係圖改為公司 / 主題 / 供應鏈 / 競爭 / 事件影響。線條必須有新聞證據或產業字典支撐。")
+    if feed is None or feed.empty:
+        st.info("目前沒有新聞資料可建立產業關係圖。")
+        return
+    nodes_df, edges_df, summary = build_industry_relationships(feed, max_news=80)
+    if nodes_df.empty:
+        st.info("目前新聞沒有抽到足夠的公司或產業主題。建議搜尋 CPU、AI server、NVIDIA Intel AMD、AI 軟硬體產業等主題。")
+        return
+    st.markdown("### 產業關係摘要")
+    c1,c2 = st.columns(2)
+    with c1:
+        st.markdown("**主要公司**"); st.write("、".join(summary.get("top_companies", [])) or "無")
+    with c2:
+        st.markdown("**主要主題**"); st.write("、".join(summary.get("top_topics", [])) or "無")
+    if summary.get("top_relations"):
+        st.markdown("**主要關係**")
+        for r in summary["top_relations"][:5]: st.markdown(f"- **{r['source']} → {r['target']}**｜{r['relation']}｜證據 {r['strength']}")
+    mode = st.radio("關係圖模式", ["全部關係", "供應鏈圖", "競爭圖", "事件傳導圖"], index=0, horizontal=True)
+    graph_path = draw_industry_graph(nodes_df, edges_df, mode=mode)
+    if graph_path:
+        with open(graph_path, "r", encoding="utf-8") as f: st.components.v1.html(f.read(), height=700, scrolling=True)
+    st.markdown("### 關係證據表")
+    if edges_df.empty: st.info("目前沒有形成明確關係。")
+    else: st.dataframe(edges_df[["source","target","relation","strength","evidence"]].head(80), use_container_width=True)
+    with st.expander("節點清單"):
+        st.dataframe(nodes_df.head(80), use_container_width=True)
+
+
 def build_graph(feed: pd.DataFrame) -> str:
     g = nx.Graph()
     if feed is not None and not feed.empty:
@@ -1223,7 +1425,7 @@ def build_graph(feed: pd.DataFrame) -> str:
 # UI
 # -------------------------------
 
-st.set_page_config(page_title="Global News Radar V21", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Global News Radar V22", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -1292,7 +1494,7 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V21：投資情報雷達穩定版")
+st.title("🌍 Global News Radar V22：投資情報雷達穩定版")
 
 with st.sidebar:
     st.header("搜尋")
@@ -1444,11 +1646,11 @@ if plan:
         if plan.get("tickers"):
             st.markdown("**相關 ticker：** " + ", ".join(plan.get("tickers", [])))
 
-tab_feed, tab_map, tab_graph, tab_raw = st.tabs(["統合新聞流", "統合地圖", "關係圖", "原始資料"])
+tab_feed, tab_map, tab_graph, tab_raw = st.tabs(["統合新聞流", "統合地圖", "產業關係圖", "原始資料"])
 
 with tab_feed:
     st.subheader("統合新聞流")
-    st.caption("V21：自然語言模式會先用 Groq 產生搜尋策略，再抓 Google News / Yahoo Finance，適合用研究問題搜尋。")
+    st.caption("V22：自然語言搜尋 + 產業關係圖；關係圖會抽出公司、主題、競爭、供應鏈與事件影響。")
 
     if feed.empty:
         st.info("尚未查到資料。請打開側欄設定關鍵字後按「更新統合新聞流」。")
@@ -1507,13 +1709,7 @@ with tab_map:
     st_folium(m, width=None, height=520, returned_objects=[], key="world_map")
 
 with tab_graph:
-    st.subheader("關係圖")
-    if feed.empty:
-        st.info("目前沒有資料可繪製關係圖。")
-    else:
-        graph_path = build_graph(feed)
-        with open(graph_path, "r", encoding="utf-8") as f:
-            st.components.v1.html(f.read(), height=700, scrolling=True)
+    render_industry_relationship_page(feed)
 
 with tab_raw:
     st.subheader("原始資料")

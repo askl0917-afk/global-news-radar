@@ -1,22 +1,35 @@
-# Global News Radar V21
+# Global News Radar V22
 
-V21 adds natural-language research search powered by Groq.
+V22 replaces the old generic relationship graph with an industry relationship graph MVP.
 
 ## What changed
 
-- New search mode:
-  - 自然語言研究搜尋
-  - 精準關鍵字
-- Natural-language mode asks Groq to convert a research question into:
-  - focused Google News queries
-  - related US tickers
-  - include/exclude concepts
-  - a short search-strategy explanation
-- Example:
-  - "AI 軟硬體產業最近有哪些重要新聞？"
-  - becomes searches around AI chips, AI servers, data centers, enterprise AI, cloud capex, HBM, networking, cooling, etc.
-- Keeps Groq finance-context translation and translation diagnostics.
-- Keeps time-range filtering and importance-first sorting.
+- New tab name: 產業關係圖.
+- The old source/category/country graph is replaced by a graph based on:
+  - companies
+  - topics / technologies
+  - supply chain relationships
+  - competitive relationships
+  - event/theme impacts
+- Relationship modes:
+  - 全部關係
+  - 供應鏈圖
+  - 競爭圖
+  - 事件傳導圖
+- Adds a relationship evidence table:
+  - source
+  - target
+  - relation
+  - strength
+  - supporting news evidence
+- Starts with a CPU / AI dictionary:
+  - Intel, AMD, Nvidia, Arm, Qualcomm, TSMC
+  - AWS, Azure, Google, Meta
+  - HBM, AI server, AI inference, AI PC, x86 vs Arm
+
+## Notes
+
+This is an MVP. It uses a curated dictionary and article titles. It does not yet read full article bodies.
 
 ## Streamlit Secrets
 
