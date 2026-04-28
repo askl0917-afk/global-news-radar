@@ -1,22 +1,23 @@
-# Global News Radar V36
+# Global News Radar V37
 
-V36 adds a real-time supply-chain verification tab.
+V37 fixes the A/B/C supply-chain views and makes verification automatic.
 
 ## What changed
 
-- Adds `即時驗證` tab.
-- Extracts relationship candidates from the current news result.
-- Uses free public Google News RSS queries to find supply-chain evidence.
-- Shows verification status, trend signal, source title, domain, and URL.
-- Keeps `supply_chain_master.csv` as a lightweight background file, not a giant database.
+- Scheme A: company names are high-contrast black text on white labels.
+- Scheme B: now uses news-driven companies and relationships only; master background no longer dominates the view.
+- Scheme C: company labels are always visible on the map, not only on hover/click.
+- Real-time supply-chain verification runs automatically after search.
+- Verification results are merged into A/B/C relation tables and map lines.
+- The `即時驗證` tab remains for reviewing or manually re-running verification.
 
 ## Upload files
 
-Upload these files to GitHub:
+Upload:
 
 - app.py
 - requirements.txt
 - README.md
 - supply_chain_master.csv
 
-Then commit and reboot the Streamlit app.
+Then commit and reboot Streamlit.

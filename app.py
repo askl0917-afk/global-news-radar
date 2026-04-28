@@ -23,8 +23,8 @@ from streamlit_folium import st_folium
 
 
 # ============================================================
-# Global News Radar V36
-# 即時供應鏈驗證版
+# Global News Radar V37
+# 自動驗證供應鏈視圖修正版
 #
 # What changed:
 # - Main financial/company news no longer depends only on GDELT DOC API.
@@ -2329,6 +2329,113 @@ def render_company_cards(df: pd.DataFrame, title: str):
         )
 
 
+
+def company_label_html(name: str, selected: bool = False) -> str:
+    """High-contrast permanent map label."""
+    bg = "rgba(255,255,255,0.96)"
+    border = "#111827" if selected else "#334155"
+    color = "#111827"
+    size = "13px" if selected else "12px"
+    weight = "900" if selected else "800"
+    safe = html.escape(str(name or ""))
+    return (
+        f"<div style='"
+        f"font-size:{size};font-weight:{weight};color:{color} !important;"
+        f"white-space:nowrap;background:{bg};padding:3px 7px;border-radius:8px;"
+        f"border:1.5px solid {border};box-shadow:0 2px 7px rgba(0,0,0,0.32);"
+        f"line-height:1.15;letter-spacing:0.1px;transform:translate(10px,-8px);"
+        f"z-index:9999;position:relative;'>"
+        f"{safe}</div>"
+    )
+
+
+def is_master_background_edge(row) -> bool:
+    rel = str(row.get("relation", ""))
+    ev = str(row.get("evidence", ""))
+    return rel.startswith("主檔") or ("供應鏈主檔" in ev)
+
+
+def apply_realtime_verification_to_edges(edges_df: pd.DataFrame, verified_df: pd.DataFrame) -> pd.DataFrame:
+    if edges_df is None:
+        edges_df = pd.DataFrame()
+    if edges_df.empty:
+        return edges_df
+    out = edges_df.copy()
+    for col in ["verified_status", "verified_trend", "verified_title", "verified_domain", "verified_url"]:
+        if col not in out.columns:
+            out[col] = ""
+
+    if verified_df is None or verified_df.empty:
+        return out
+
+    # First evidence per pair. Match both directions because relationship extraction can be non-directional.
+    records = {}
+    for _, v in verified_df.iterrows():
+        src = str(v.get("source_company", "")).strip()
+        dst = str(v.get("target_company", "")).strip()
+        if not src or not dst:
+            continue
+        payload = {
+            "verified_status": v.get("verification_status", ""),
+            "verified_trend": v.get("trend_signal", ""),
+            "verified_title": v.get("evidence_title", ""),
+            "verified_domain": v.get("domain", ""),
+            "verified_url": v.get("url", ""),
+        }
+        records.setdefault((src, dst), payload)
+        records.setdefault((dst, src), payload)
+
+    for i, row in out.iterrows():
+        key = (str(row.get("source", "")).strip(), str(row.get("target", "")).strip())
+        if key in records:
+            for k, val in records[key].items():
+                out.at[i, k] = val
+            # Use verification to refine relation status, but keep original fields too.
+            if records[key].get("verified_status"):
+                out.at[i, "confidence"] = records[key]["verified_status"]
+            if records[key].get("verified_trend"):
+                out.at[i, "trend_signal"] = records[key]["verified_trend"]
+
+    return out
+
+
+def get_news_driven_supply_chain_view(companies_df: pd.DataFrame, edges_df: pd.DataFrame, verified_df: pd.DataFrame | None = None):
+    """Return a news-driven view for schemes A/B/C.
+
+    Master background is removed from the main view. It can still exist as context elsewhere,
+    but schemes A/B/C should reflect this search's news and auto-verification results.
+    """
+    if companies_df is None:
+        companies_df = pd.DataFrame()
+    if edges_df is None:
+        edges_df = pd.DataFrame()
+
+    companies = companies_df.copy()
+    edges = edges_df.copy()
+
+    if not edges.empty:
+        edges = edges[~edges.apply(is_master_background_edge, axis=1)].copy()
+        edges = apply_realtime_verification_to_edges(edges, verified_df)
+
+    # Keep companies actually mentioned in this search, plus endpoints of news-driven edges and verified pairs.
+    keep_nodes = set()
+    if not companies.empty and "news_hits" in companies.columns:
+        keep_nodes.update(companies[companies["news_hits"].fillna(0).astype(int) > 0]["node"].astype(str).tolist())
+    if not edges.empty:
+        keep_nodes.update(edges["source"].dropna().astype(str).tolist())
+        keep_nodes.update(edges["target"].dropna().astype(str).tolist())
+    if verified_df is not None and not verified_df.empty:
+        keep_nodes.update(verified_df["source_company"].dropna().astype(str).tolist())
+        keep_nodes.update(verified_df["target_company"].dropna().astype(str).tolist())
+
+    if keep_nodes and not companies.empty:
+        companies = companies[companies["node"].astype(str).isin(keep_nodes)].copy()
+    elif not companies.empty and "news_hits" in companies.columns:
+        companies = companies[companies["news_hits"].fillna(0).astype(int) > 0].copy()
+
+    return companies, edges
+
+
 def draw_supply_chain_geo_map(companies_df: pd.DataFrame, edges_df: pd.DataFrame):
     m = folium.Map(location=[22, 10], zoom_start=2, min_zoom=1, tiles='CartoDB positron', control_scale=True, world_copy_jump=True)
     if companies_df is None or companies_df.empty:
@@ -2352,9 +2459,21 @@ def draw_supply_chain_geo_map(companies_df: pd.DataFrame, edges_df: pd.DataFrame
             if pd.isna(s.get('lat')) or pd.isna(d.get('lat')):
                 continue
             group = row.get('edge_group', '其他')
-            color = '#2f80ed' if group == '供應鏈' else ('#eb5757' if group == '競爭' else '#f2994a')
+            verified_trend = str(row.get('verified_trend', row.get('trend_signal', '')) or '')
+            if '中斷' in verified_trend or '下降' in verified_trend:
+                color = '#dc2626'
+            elif '新增' in verified_trend or '擴大' in verified_trend or '上升' in verified_trend:
+                color = '#16a34a'
+            else:
+                color = '#2f80ed' if group == '供應鏈' else ('#eb5757' if group == '競爭' else '#f2994a')
             target_layer = supply_fg if group == '供應鏈' else (compete_fg if group == '競爭' else event_fg)
-            popup = folium.Popup(f"<b>{html.escape(str(src))} → {html.escape(str(dst))}</b><br>{html.escape(str(row.get('relation','')))}<br><small>{html.escape(str(row.get('evidence','')))}</small>", max_width=360)
+            evidence_bits = [
+                str(row.get('evidence','')),
+                str(row.get('verified_status','')),
+                str(row.get('verified_title','')),
+                str(row.get('verified_domain','')),
+            ]
+            popup = folium.Popup(f"<b>{html.escape(str(src))} → {html.escape(str(dst))}</b><br>{html.escape(str(row.get('relation','')))}<br><small>{html.escape('｜'.join([x for x in evidence_bits if x]))}</small>", max_width=420)
             folium.PolyLine(
                 locations=[(float(s['lat']), float(s['lon'])), (float(d['lat']), float(d['lon']))],
                 color=color,
@@ -2393,7 +2512,7 @@ def draw_supply_chain_geo_map(companies_df: pd.DataFrame, edges_df: pd.DataFrame
         ).add_to(node_fg)
         folium.map.Marker(
             [float(row['lat']), float(row['lon'])],
-            icon=folium.DivIcon(html=f"<div style='font-size:11px;font-weight:700;white-space:nowrap;background:rgba(255,255,255,0.78);padding:1px 4px;border-radius:6px;'>{html.escape(str(row.get('node')))}</div>")
+            icon=folium.DivIcon(html=company_label_html(str(row.get('node'))))
         ).add_to(node_fg)
 
     folium.LayerControl(collapsed=True).add_to(m)
@@ -2401,24 +2520,53 @@ def draw_supply_chain_geo_map(companies_df: pd.DataFrame, edges_df: pd.DataFrame
 
 
 def render_supply_chain_layered_sheet(companies_df: pd.DataFrame, edges_df: pd.DataFrame):
-    st.caption('方案 B：直接看上游 / 中游 / 平台 / 下游的分層狀況，比地圖更接近真正的供應鏈閱讀方式。')
+    st.caption('方案 B：新聞驅動分層圖。只顯示本次新聞提到或自動驗證涉及的公司/關係，不再把主檔固定背景塞進主畫面。')
     if companies_df is None or companies_df.empty:
-        st.info('目前沒有足夠公司資料可建立供應鏈分層圖。')
+        st.info('本次新聞沒有足夠公司資料可建立供應鏈分層圖。')
         return
+
+    news_companies = companies_df.copy()
+    if 'news_hits' in news_companies.columns:
+        news_companies = news_companies.sort_values(['news_hits', 'count', 'node'], ascending=[False, False, True])
 
     layer_order = ['上游', '中游', '平台/OEM', '下游', '其他']
     cols = st.columns(len(layer_order))
     for idx, bucket in enumerate(layer_order):
         with cols[idx]:
-            render_company_cards(companies_df[companies_df['layer_bucket'] == bucket].head(8), bucket)
+            render_company_cards(news_companies[news_companies['layer_bucket'] == bucket].head(8), bucket)
 
-    st.markdown('### 供應鏈傳導表')
+    st.markdown('### 本次新聞 / 自動驗證抽出的供應鏈關係')
     if edges_df is None or edges_df.empty:
-        st.info('目前沒有明確的供應鏈連線。')
+        st.info('本次新聞沒有抽出明確的供應鏈連線。')
     else:
         show = edges_df[edges_df['edge_group'].isin(['供應鏈', '事件傳導', '競爭'])].copy()
-        st.dataframe(show[[c for c in ['source','target','edge_group','relation','confidence','supply_chain_status','trend_signal','master_status','master_confidence','strength','evidence'] if c in show.columns]].head(80), use_container_width=True)
+        if show.empty:
+            show = edges_df.copy()
+        cols = ['source','target','edge_group','relation','confidence','supply_chain_status','trend_signal',
+                'verified_status','verified_trend','verified_title','verified_domain','verified_url','strength','evidence']
+        st.dataframe(show[[c for c in cols if c in show.columns]].head(100), use_container_width=True)
 
+        st.markdown('### 自動驗證重點')
+        verified_rows = show[show.get('verified_status', pd.Series([''] * len(show))).astype(str).str.len() > 0] if not show.empty else pd.DataFrame()
+        if verified_rows.empty:
+            st.caption('目前沒有自動驗證到可用證據，或查詢還沒完成。')
+        else:
+            for _, r in verified_rows.head(12).iterrows():
+                url = str(r.get('verified_url', '') or '')
+                title = html.escape(str(r.get('verified_title', '') or '無標題'))
+                link = f"<a href='{html.escape(url)}' target='_blank'>{title}</a>" if url.startswith('http') else title
+                st.markdown(
+                    f"""
+                    <div style="border:1px solid rgba(128,128,128,0.25);border-radius:12px;padding:10px 12px;margin:8px 0;background:rgba(128,128,128,0.06);">
+                    <b>{html.escape(str(r.get('source','')))} → {html.escape(str(r.get('target','')))}</b><br>
+                    關係：{html.escape(str(r.get('relation','')))}<br>
+                    驗證：{html.escape(str(r.get('verified_status','')))}｜{html.escape(str(r.get('verified_trend','')))}<br>
+                    證據：{link}<br>
+                    <small>{html.escape(str(r.get('verified_domain','')))}</small>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
 
 def render_map_with_panel_sheet(companies_df: pd.DataFrame, edges_df: pd.DataFrame):
     st.caption('方案 C：左邊看地圖，右邊看公司狀態面板；適合你直接點一家公司，立刻看上下游、競爭與新聞。')
@@ -2458,6 +2606,10 @@ def render_map_with_panel_sheet(companies_df: pd.DataFrame, edges_df: pd.DataFra
             is_selected = row.get('node') == selected
             fill = '#111827' if is_selected else ('#16a34a' if row.get('status') == '正向' else ('#dc2626' if row.get('status') == '負向' else '#f59e0b'))
             folium.CircleMarker(location=[float(row['lat']), float(row['lon'])], radius=10 if is_selected else 7, color='white', weight=2, fill=True, fill_color=fill, fill_opacity=0.95, tooltip=f"{row.get('node')}｜{row.get('layer')}").add_to(base_map)
+            folium.map.Marker(
+                [float(row['lat']), float(row['lon'])],
+                icon=folium.DivIcon(html=company_label_html(str(row.get('node')), selected=is_selected))
+            ).add_to(base_map)
         st_folium(base_map, width=None, height=520, returned_objects=[], key='company_panel_map')
 
     with right:
@@ -2481,7 +2633,7 @@ def render_map_with_panel_sheet(companies_df: pd.DataFrame, edges_df: pd.DataFra
             st.markdown('**競爭對手：** ' + ('、'.join(sorted(set(comp['source'].tolist() + comp['target'].tolist()) - {selected})) if not comp.empty else '—'))
             st.markdown('**事件 / 題材：** ' + ('、'.join(sorted(set(event['source'].tolist() + event['target'].tolist()) - {selected})) if not event.empty else '—'))
             with st.expander('相關連線明細'):
-                st.dataframe(related[[c for c in ['source','target','edge_group','relation','confidence','supply_chain_status','trend_signal','master_status','master_confidence','strength','evidence'] if c in related.columns]].head(50), use_container_width=True)
+                st.dataframe(related[[c for c in ['source','target','edge_group','relation','confidence','supply_chain_status','trend_signal','verified_status','verified_trend','verified_title','verified_domain','master_status','master_confidence','strength','evidence'] if c in related.columns]].head(50), use_container_width=True)
 def extract_companies_from_text(text: str) -> list:
     t = (text or "").lower()
     found, seen = [], set()
@@ -2647,7 +2799,7 @@ def build_graph(feed: pd.DataFrame) -> str:
 # UI
 # -------------------------------
 
-st.set_page_config(page_title="Global News Radar V36", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Global News Radar V37", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -2716,7 +2868,7 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V36：即時供應鏈驗證版")
+st.title("🌍 Global News Radar V37：自動驗證供應鏈視圖修正版")
 
 with st.sidebar:
     st.header("搜尋")
@@ -2883,6 +3035,19 @@ if not feed.empty:
 else:
     feed = st.session_state["last_feed"]
 
+# V37: 自動背景供應鏈驗證。不需要手動按「開始即時驗證」。
+if search_button and not feed.empty:
+    try:
+        auto_candidates = build_realtime_verification_candidates(feed, limit=8)
+        if not auto_candidates.empty:
+            st.session_state["last_realtime_verification"] = run_realtime_supply_chain_verification(
+                auto_candidates,
+                max_results_per_relation=1,
+                time_range=time_range if time_range in ["最近 24 小時", "最近 3 天", "最近 7 天", "不限時間"] else "最近 7 天",
+            )
+    except Exception as exc:
+        st.session_state["last_realtime_verification_error"] = str(exc)
+
 if search_button and enable_snapshot and not feed.empty:
     try:
         snap_companies, snap_edges, _ = build_company_supply_chain_snapshot(feed, max_news=80)
@@ -2998,7 +3163,7 @@ def run_realtime_supply_chain_verification(candidates: pd.DataFrame, max_results
 
 def render_realtime_verification_tab(feed: pd.DataFrame, time_range: str):
     st.subheader("即時供應鏈驗證")
-    st.caption("V36：根據本次新聞抽出的公司關係，即時用公開新聞/RSS 找供應鏈證據；不再依賴一直養大主檔。")
+    st.caption("V37：搜尋完成後會自動背景驗證 Top 關係；這頁只是讓你查看結果或手動重跑。")
     if feed is None or feed.empty:
         st.info("目前沒有新聞資料。請先搜尋一次。")
         return
@@ -3012,7 +3177,7 @@ def render_realtime_verification_tab(feed: pd.DataFrame, time_range: str):
         st.warning("本次新聞沒有抽出可驗證的公司關係。")
         return
     st.dataframe(candidates, use_container_width=True)
-    if st.button("開始即時驗證", type="primary"):
+    if st.button("重新執行即時驗證", type="secondary"):
         with st.spinner("正在即時查詢公開供應鏈證據..."):
             st.session_state["last_realtime_verification"] = run_realtime_supply_chain_verification(candidates, max_results_per_relation=max_per, time_range=verify_range)
     verified = st.session_state.get("last_realtime_verification", pd.DataFrame())
@@ -3036,14 +3201,14 @@ def render_realtime_verification_tab(feed: pd.DataFrame, time_range: str):
                 unsafe_allow_html=True,
             )
     else:
-        st.info("按下「開始即時驗證」後，這裡會顯示供應鏈證據表。")
+        st.info("搜尋完成後會自動背景驗證；若目前沒有結果，可按「重新執行即時驗證」。")
 
 
 tab_feed, tab_map, tab_graph, tab_verify, tab_delta, tab_candidates, tab_raw = st.tabs(["統合新聞流", "統合地圖", "產業關係圖", "即時驗證", "Delta Radar", "主檔候選", "原始資料"])
 
 with tab_feed:
     st.subheader("統合新聞流")
-    st.caption("V36：新增即時驗證：根據本次新聞抽出的公司關係，直接查公開資料找供應鏈證據。")
+    st.caption("V37：搜尋後會自動背景驗證供應鏈關係，並直接反映到方案 A/B/C。")
 
     if not feed.empty:
         st.markdown("### 複製新聞包")
@@ -3143,7 +3308,7 @@ with tab_feed:
 
 with tab_map:
     st.subheader("統合地圖 / 供應鏈視圖")
-    st.caption("V36：供應鏈主檔作為背景骨架；搜尋發現的新公司/新關係會先進入候選清單，不直接污染主檔。")
+    st.caption("V37：方案 A/B/C 改成新聞驅動 + 自動驗證；主檔只當背景，不再把固定資料塞進主畫面。")
 
     map_sheet_a, map_sheet_b, map_sheet_c, map_sheet_old = st.tabs([
         "方案 A｜供應鏈地理圖",
@@ -3153,26 +3318,28 @@ with tab_map:
     ])
 
     companies_df, sc_edges_df, sc_summary = build_company_supply_chain_snapshot(feed, max_news=80)
+    verified_df = st.session_state.get("last_realtime_verification", pd.DataFrame())
+    view_companies_df, view_edges_df = get_news_driven_supply_chain_view(companies_df, sc_edges_df, verified_df)
 
     with map_sheet_a:
-        st.caption("方案 A：地圖上的點改成公司 / 供應鏈節點，線條顯示供應鏈、競爭、事件傳導。")
-        if companies_df.empty:
-            st.info("目前沒有足夠公司資料可建立供應鏈地理圖。建議搜尋 CPU、GPU、AI server、NVIDIA Intel AMD 這類主題。")
+        st.caption("方案 A：新聞驅動供應鏈地理圖。公司名稱改為黑字白底高辨識標籤；線條會套用自動驗證狀態。")
+        if view_companies_df.empty:
+            st.info("本次新聞沒有足夠公司資料可建立供應鏈地理圖。建議搜尋 CPU、GPU、AI server、NVIDIA Intel AMD 這類主題。")
         else:
             top1, top2, top3 = st.columns(3)
-            top1.metric("公司節點", f"{len(companies_df):,}")
-            top2.metric("供應鏈 / 關係線", f"{len(sc_edges_df):,}")
+            top1.metric("本次新聞公司節點", f"{len(view_companies_df):,}")
+            top2.metric("本次新聞 / 驗證關係線", f"{len(view_edges_df):,}")
             top3.metric("主要公司", "、".join(sc_summary.get('top_companies', [])[:3]) or "—")
-            m_a = draw_supply_chain_geo_map(companies_df, sc_edges_df)
-            st_folium(m_a, width=None, height=560, returned_objects=[], key="world_map_supply_chain")
+            m_a = draw_supply_chain_geo_map(view_companies_df, view_edges_df)
+            st_folium(m_a, width=None, height=560, returned_objects=[], key="world_map_supply_chain_v37")
             with st.expander("節點資料表"):
-                st.dataframe(companies_df[['node', 'layer_bucket', 'layer', 'status', 'news_hits', 'country', 'city', 'top_categories']].head(80), use_container_width=True)
+                st.dataframe(view_companies_df[['node', 'layer_bucket', 'layer', 'status', 'news_hits', 'country', 'city', 'top_categories']].head(80), use_container_width=True)
 
     with map_sheet_b:
-        render_supply_chain_layered_sheet(companies_df, sc_edges_df)
+        render_supply_chain_layered_sheet(view_companies_df, view_edges_df)
 
     with map_sheet_c:
-        render_map_with_panel_sheet(companies_df, sc_edges_df)
+        render_map_with_panel_sheet(view_companies_df, view_edges_df)
 
     with map_sheet_old:
         st.caption("舊版保留給你對照：紫色數字＝公司/財經新聞來源國家篇數；藍色數字＝全球事件。")
