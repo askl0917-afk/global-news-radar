@@ -22,7 +22,7 @@ from streamlit_folium import st_folium
 
 
 # ============================================================
-# Global News Radar V24
+# Global News Radar V25
 # 投資情報雷達穩定版
 #
 # What changed:
@@ -362,14 +362,39 @@ def get_groq_api_key():
     return os.environ.get("GROQ_API_KEY", "")
 
 
-def get_groq_model():
+def get_groq_model_light():
+    """Light model for query planning and bulk title translation."""
+    try:
+        model = st.secrets.get("GROQ_MODEL_LIGHT", "")
+        if model:
+            return model
+    except Exception:
+        pass
+    return os.environ.get("GROQ_MODEL_LIGHT", "llama-3.1-8b-instant")
+
+
+def get_groq_model_heavy():
+    """Heavy model for event summary and high-value finance translation."""
+    try:
+        model = st.secrets.get("GROQ_MODEL_HEAVY", "")
+        if model:
+            return model
+    except Exception:
+        pass
+
+    # Backward compatible with older Secrets.
     try:
         model = st.secrets.get("GROQ_MODEL", "")
         if model:
             return model
     except Exception:
         pass
-    return os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+    return os.environ.get("GROQ_MODEL_HEAVY", os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"))
+
+
+def get_groq_model():
+    """Backward-compatible default model."""
+    return get_groq_model_heavy()
 
 
 def groq_is_enabled():
@@ -446,13 +471,13 @@ JSON 格式：
     try:
         client = Groq(api_key=api_key)
         completion = client.chat.completions.create(
-            model=get_groq_model(),
+            model=get_groq_model_light(),
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.1,
-            max_tokens=700,
+            max_tokens=650,
         )
         raw = completion.choices[0].message.content.strip()
         raw = raw.strip("`").strip()
@@ -525,7 +550,7 @@ def apply_finance_translation_guardrails(original: str, translated: str) -> str:
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def groq_finance_translate_title(title: str, domain: str = "", category: str = "") -> str:
+def groq_finance_translate_title(title: str, domain: str = "", category: str = "", model_tier: str = "light") -> str:
     """Use Groq hosted open-weight model to translate finance headline into Traditional Chinese."""
     title = clean_text(title)
     if not title:
@@ -548,11 +573,6 @@ def groq_finance_translate_title(title: str, domain: str = "", category: str = "
 - 5T giant = 5 兆美元巨頭。
 - surges = 股價大漲 / 市值拉升，視上下文選擇。
 - 如果標題是媒體誇飾，要翻成財經語境，不要照字面誤導。
-
-範例：
-原文：Nvidia crashes Intel’s party: $5T giant surges as AI market pivots to CPUs
-好翻譯：Intel 財報點燃 CPU 題材，但輝達也來搶風頭：AI 推論讓市場重新重視 CPU 價值
-壞翻譯：Nvidia 擊敗英特爾派對
 """.strip()
 
     user_prompt = f"""
@@ -564,21 +584,21 @@ def groq_finance_translate_title(title: str, domain: str = "", category: str = "
 
     try:
         client = Groq(api_key=api_key)
+        model_name = get_groq_model_heavy() if model_tier == "heavy" else get_groq_model_light()
         completion = client.chat.completions.create(
-            model=get_groq_model(),
+            model=model_name,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.0,
-            max_tokens=220,
+            max_tokens=220 if model_tier == "heavy" else 170,
         )
         result = completion.choices[0].message.content
         result = clean_text(result)
         return apply_finance_translation_guardrails(title, result)
     except Exception:
         return ""
-
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -597,15 +617,27 @@ def machine_translate_title_to_zh_tw(title: str) -> str:
         return ""
 
 
-def translate_title_with_engine(title: str, domain: str = "", category: str = "", translation_mode: str = "Groq AI 財經翻譯優先") -> dict:
+def translate_title_with_engine(
+    title: str,
+    domain: str = "",
+    category: str = "",
+    translation_mode: str = "Groq AI 財經翻譯優先",
+    model_tier: str = "light",
+) -> dict:
     title = clean_text(title)
     if not title:
         return {"text": "", "engine": "無"}
 
     if translation_mode == "Groq AI 財經翻譯優先":
-        groq_result = groq_finance_translate_title(title, domain=domain, category=category)
+        groq_result = groq_finance_translate_title(
+            title,
+            domain=domain,
+            category=category,
+            model_tier=model_tier,
+        )
         if groq_result:
-            return {"text": groq_result, "engine": f"Groq AI｜{get_groq_model()}"}
+            model_name = get_groq_model_heavy() if model_tier == "heavy" else get_groq_model_light()
+            return {"text": groq_result, "engine": f"Groq {model_tier}｜{model_name}"}
 
         mt = machine_translate_title_to_zh_tw(title)
         return {
@@ -623,8 +655,20 @@ def translate_title_with_engine(title: str, domain: str = "", category: str = ""
     return {"text": "", "engine": "不翻譯"}
 
 
-def translate_title_to_zh_tw(title: str, domain: str = "", category: str = "", translation_mode: str = "Groq AI 財經翻譯優先") -> str:
-    return translate_title_with_engine(title, domain=domain, category=category, translation_mode=translation_mode).get("text", "")
+def translate_title_to_zh_tw(
+    title: str,
+    domain: str = "",
+    category: str = "",
+    translation_mode: str = "Groq AI 財經翻譯優先",
+    model_tier: str = "light",
+) -> str:
+    return translate_title_with_engine(
+        title,
+        domain=domain,
+        category=category,
+        translation_mode=translation_mode,
+        model_tier=model_tier,
+    ).get("text", "")
 
 
 
@@ -779,7 +823,7 @@ def apply_heat_ranking(df: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def groq_summarize_events(feed_records: list, user_query: str = "", time_range: str = "") -> str:
+def groq_summarize_events(feed_records: list, user_query: str = "", time_range: str = "", summary_model: str = "heavy") -> str:
     """Use Groq to summarize top news headlines into analyst-style implications."""
     if not feed_records:
         return ""
@@ -841,13 +885,13 @@ def groq_summarize_events(feed_records: list, user_query: str = "", time_range: 
     try:
         client = Groq(api_key=api_key)
         completion = client.chat.completions.create(
-            model=get_groq_model(),
+            model=(get_groq_model_heavy() if summary_model == "heavy" else get_groq_model_light()),
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.15,
-            max_tokens=900,
+            max_tokens=(760 if summary_model == "heavy" else 520),
         )
         return completion.choices[0].message.content.strip()
     except Exception as exc:
@@ -981,7 +1025,13 @@ def fetch_yahoo_finance_rss(ticker: str, max_items: int = 20) -> pd.DataFrame:
     return df.drop_duplicates(subset=["title"])
 
 
-def enrich_articles(df: pd.DataFrame, translate_titles: bool, translation_mode: str = "Groq AI 財經翻譯優先") -> pd.DataFrame:
+def enrich_articles(
+    df: pd.DataFrame,
+    translate_titles: bool,
+    translation_mode: str = "Groq AI 財經翻譯優先",
+    groq_translate_top_n: int = 10,
+    heavy_translate_top_n: int = 3,
+) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
 
@@ -990,26 +1040,49 @@ def enrich_articles(df: pd.DataFrame, translate_titles: bool, translation_mode: 
     df["source_country"] = df["source_country"].fillna("").apply(normalize_country_name)
     df["source_quality"] = df.apply(lambda row: source_quality(row.get("domain", ""), row.get("source_type", "")), axis=1)
     df["category"] = df["title"].apply(classify_news)
+    df["importance"] = df.apply(importance_score, axis=1)
+
+    # First rank without translation, so Groq is only spent on the most useful rows.
+    df = apply_heat_ranking(df)
 
     if translate_titles:
-        translations = df.apply(
-            lambda row: translate_title_with_engine(
-                row.get("title", ""),
-                domain=row.get("domain", ""),
-                category=row.get("category", ""),
-                translation_mode=translation_mode,
-            ),
-            axis=1,
-        )
-        df["title_zh"] = translations.apply(lambda x: x.get("text", ""))
-        df["translation_engine"] = translations.apply(lambda x: x.get("engine", "未知"))
+        df["title_zh"] = ""
+        df["translation_engine"] = "未翻譯｜省 token"
+
+        top_n = int(groq_translate_top_n or 0)
+        heavy_n = int(heavy_translate_top_n or 0)
+
+        if translation_mode == "不翻譯只保留原文":
+            df["translation_engine"] = "不翻譯"
+        elif translation_mode == "只用免費機翻":
+            for idx in list(df.head(top_n).index):
+                row = df.loc[idx]
+                trans = translate_title_with_engine(
+                    row.get("title", ""),
+                    domain=row.get("domain", ""),
+                    category=row.get("category", ""),
+                    translation_mode=translation_mode,
+                    model_tier="light",
+                )
+                df.at[idx, "title_zh"] = trans.get("text", "")
+                df.at[idx, "translation_engine"] = trans.get("engine", "免費機翻")
+        else:
+            for rank, idx in enumerate(list(df.head(top_n).index), 1):
+                row = df.loc[idx]
+                tier = "heavy" if rank <= heavy_n else "light"
+                trans = translate_title_with_engine(
+                    row.get("title", ""),
+                    domain=row.get("domain", ""),
+                    category=row.get("category", ""),
+                    translation_mode=translation_mode,
+                    model_tier=tier,
+                )
+                df.at[idx, "title_zh"] = trans.get("text", "")
+                df.at[idx, "translation_engine"] = trans.get("engine", "未知")
     else:
         df["title_zh"] = ""
         df["translation_engine"] = "不翻譯"
 
-    df["importance"] = df.apply(importance_score, axis=1)
-
-    # Sort by heat/discussion score first, then importance/source quality/recency.
     df = apply_heat_ranking(df)
     return df
 
@@ -1026,6 +1099,8 @@ def search_finance_news(
     translation_mode: str = "Groq AI 財經翻譯優先",
     search_mode: str = "精準關鍵字",
     query_plan: dict | None = None,
+    groq_translate_top_n: int = 10,
+    heavy_translate_top_n: int = 3,
 ) -> pd.DataFrame:
     frames = []
 
@@ -1072,7 +1147,7 @@ def search_finance_news(
     if df.empty:
         return pd.DataFrame()
 
-    df = enrich_articles(df, translate_titles=translate_titles, translation_mode=translation_mode)
+    df = enrich_articles(df, translate_titles=translate_titles, translation_mode=translation_mode, groq_translate_top_n=groq_translate_top_n, heavy_translate_top_n=heavy_translate_top_n)
 
     # Final cap after union/boost searches.
     if len(df) > max_items:
@@ -1597,7 +1672,7 @@ def build_graph(feed: pd.DataFrame) -> str:
 # UI
 # -------------------------------
 
-st.set_page_config(page_title="Global News Radar V24", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Global News Radar V25", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -1666,7 +1741,7 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V24：投資情報雷達穩定版")
+st.title("🌍 Global News Radar V25：投資情報雷達穩定版")
 
 with st.sidebar:
     st.header("搜尋")
@@ -1697,9 +1772,32 @@ with st.sidebar:
         help="Groq 模式需要在 Streamlit Secrets 設定 GROQ_API_KEY。"
     )
     if groq_is_enabled():
-        st.success(f"Groq API：已啟用｜模型：{get_groq_model()}")
+        st.success(f"Groq API：已啟用｜Light：{get_groq_model_light()}｜Heavy：{get_groq_model_heavy()}")
     else:
         st.warning("Groq API：未設定。目前會退回免費機翻或原文。")
+
+    groq_usage_mode = st.radio(
+        "Groq 使用模式",
+        ["省 token", "平衡", "高品質"],
+        index=1,
+        help="省 token：多用 8B、少翻譯；平衡：Top 少數用 70B；高品質：更多 Top 新聞用 70B。"
+    )
+    if groq_usage_mode == "省 token":
+        default_translate_n, default_heavy_n, default_summary_n, default_summary_model = 5, 0, 5, "light"
+    elif groq_usage_mode == "高品質":
+        default_translate_n, default_heavy_n, default_summary_n, default_summary_model = 20, 8, 12, "heavy"
+    else:
+        default_translate_n, default_heavy_n, default_summary_n, default_summary_model = 10, 3, 8, "heavy"
+
+    groq_translate_top_n = st.slider("Groq / 機翻標題翻譯前幾則", 0, 30, default_translate_n, step=5)
+    heavy_translate_top_n = st.slider("其中用 Heavy 精翻前幾則", 0, 10, min(default_heavy_n, groq_translate_top_n), step=1)
+    summary_model = st.radio(
+        "事件總結模型",
+        ["light", "heavy"],
+        index=0 if default_summary_model == "light" else 1,
+        horizontal=True,
+        help="light 省 token；heavy 較適合產業影響判斷。"
+    )
 
     with st.expander("測試 Groq 翻譯"):
         test_title = st.text_input(
@@ -1708,7 +1806,7 @@ with st.sidebar:
             key="groq_test_title",
         )
         if st.button("執行翻譯測試", key="run_groq_test"):
-            test = translate_title_with_engine(test_title, domain="investing.com", category="AI / 半導體", translation_mode=translation_mode)
+            test = translate_title_with_engine(test_title, domain="investing.com", category="AI / 半導體", translation_mode=translation_mode, model_tier="heavy")
             st.write(f"翻譯來源：{test.get('engine')}")
             st.write(test.get("text"))
 
@@ -1741,7 +1839,7 @@ with st.sidebar:
     st.divider()
     st.subheader("AI 事件總結")
     enable_ai_summary = st.checkbox("搜尋後產生 Groq 事件總結", value=True)
-    summary_items = st.slider("總結讀取前幾則新聞", 5, 25, 15, step=5)
+    summary_items = st.slider("總結讀取前幾則新聞", 5, 20, default_summary_n, step=1)
 
     search_button = st.button("更新統合新聞流", type="primary", key="update_feed")
 
@@ -1787,6 +1885,8 @@ if search_button:
             translation_mode=translation_mode,
             search_mode=search_mode,
             query_plan=query_plan,
+            groq_translate_top_n=groq_translate_top_n,
+            heavy_translate_top_n=heavy_translate_top_n,
         )
 
         if not articles.empty:
@@ -1813,6 +1913,7 @@ if search_button and enable_ai_summary:
             records_for_summary,
             user_query=query,
             time_range=time_range,
+            summary_model=summary_model,
         )
 
 col1, col2, col3, col4 = st.columns(4)
@@ -1839,7 +1940,7 @@ tab_feed, tab_map, tab_graph, tab_raw = st.tabs(["統合新聞流", "統合地�
 
 with tab_feed:
     st.subheader("統合新聞流")
-    st.caption("V24：Groq 會先讀取高熱度新聞，在最上方產生事件總結、可能影響與追蹤重點。")
+    st.caption("V25：雙模型省 token：搜尋拆解/批量翻譯用 Light，總結/精翻才用 Heavy。")
 
     if st.session_state.get("last_ai_summary"):
         st.markdown("### AI 事件總結")
