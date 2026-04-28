@@ -23,8 +23,8 @@ from streamlit_folium import st_folium
 
 
 # ============================================================
-# Global News Radar V33
-# 主檔候選增補 + Delta
+# Global News Radar V36
+# 即時供應鏈驗證版
 #
 # What changed:
 # - Main financial/company news no longer depends only on GDELT DOC API.
@@ -2647,7 +2647,7 @@ def build_graph(feed: pd.DataFrame) -> str:
 # UI
 # -------------------------------
 
-st.set_page_config(page_title="Global News Radar V33", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Global News Radar V36", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -2716,7 +2716,7 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V33：主檔候選增補 + Delta")
+st.title("🌍 Global News Radar V36：即時供應鏈驗證版")
 
 with st.sidebar:
     st.header("搜尋")
@@ -2914,11 +2914,136 @@ if plan:
         if plan.get("tickers"):
             st.markdown("**相關 ticker：** " + ", ".join(plan.get("tickers", [])))
 
-tab_feed, tab_map, tab_graph, tab_delta, tab_candidates, tab_raw = st.tabs(["統合新聞流", "統合地圖", "產業關係圖", "Delta Radar", "主檔候選", "原始資料"])
+
+def build_realtime_verification_candidates(feed: pd.DataFrame, limit: int = 12) -> pd.DataFrame:
+    """Build relationship candidates for real-time supply-chain verification from current news."""
+    companies, edges, _ = build_company_supply_chain_snapshot(feed, max_news=80)
+    if edges is None or edges.empty:
+        return pd.DataFrame(columns=["source_company", "target_company", "candidate_relation", "evidence", "confidence"])
+    work = edges.copy()
+    if "relation" not in work.columns:
+        return pd.DataFrame()
+    work = work[~work["relation"].astype(str).str.startswith("主檔", na=False)].copy()
+    if work.empty:
+        return pd.DataFrame(columns=["source_company", "target_company", "candidate_relation", "evidence", "confidence"])
+    if "confidence" not in work.columns:
+        work["confidence"] = ""
+    if "strength" not in work.columns:
+        work["strength"] = 1
+    work["_score"] = pd.to_numeric(work["strength"], errors="coerce").fillna(1)
+    work["_score"] += work["confidence"].astype(str).apply(lambda x: 3 if x.startswith("高") else (2 if x.startswith("中") else 1))
+    work = work.sort_values("_score", ascending=False).drop_duplicates(subset=["source", "target", "relation"])
+    return pd.DataFrame([{
+        "source_company": r.get("source", ""),
+        "target_company": r.get("target", ""),
+        "candidate_relation": r.get("relation", ""),
+        "evidence": r.get("evidence", ""),
+        "confidence": r.get("confidence", ""),
+    } for _, r in work.head(limit).iterrows()])
+
+
+def classify_verification_status(title: str, domain: str) -> tuple[str, str]:
+    text = f"{title} {domain}".lower()
+    high_terms = ["supplier", "supply", "customer", "contract", "deal", "partnership", "selected", "adopts", "order", "wins", "qualified", "供應", "客戶", "合約", "合作", "採用", "訂單", "認證"]
+    down_terms = ["cancel", "terminate", "delay", "ban", "restriction", "cut", "drop", "lose", "lost", "退出", "取消", "延後", "限制", "禁令", "轉單", "減少"]
+    up_terms = ["new", "expand", "ramp", "increase", "gain", "win", "order", "新增", "擴大", "增加", "提升", "放量", "打入"]
+    confidence = "高｜公開資料有明確供應鏈線索" if any(t in text for t in high_terms) else "中｜公開資料有共現或題材關聯"
+    if any(t in text for t in down_terms):
+        trend = "下降 / 中斷風險"
+    elif any(t in text for t in up_terms):
+        trend = "新增 / 擴大候選"
+    else:
+        trend = "待確認"
+    return confidence, trend
+
+
+def run_realtime_supply_chain_verification(candidates: pd.DataFrame, max_results_per_relation: int = 3, time_range: str = "最近 7 天") -> pd.DataFrame:
+    if candidates is None or candidates.empty:
+        return pd.DataFrame()
+    rows = []
+    preferred = ["reuters.com", "finance.yahoo.com", "cnbc.com", "marketwatch.com", "investing.com"]
+    for _, c in candidates.iterrows():
+        src = str(c.get("source_company", "")).strip()
+        dst = str(c.get("target_company", "")).strip()
+        rel = str(c.get("candidate_relation", "")).strip()
+        if not src or not dst:
+            continue
+        verification_query = f'"{src}" "{dst}" supplier OR customer OR partnership OR supply chain OR order OR contract'
+        try:
+            result = fetch_google_news_rss(verification_query, max_items=max_results_per_relation, preferred_domains=preferred[:2], time_range=time_range)
+        except Exception as exc:
+            rows.append({
+                "source_company": src, "target_company": dst, "candidate_relation": rel,
+                "verification_query": verification_query, "verification_status": "查詢失敗",
+                "trend_signal": "待確認", "evidence_title": str(exc), "domain": "", "url": "",
+            })
+            continue
+        if result is None or result.empty:
+            rows.append({
+                "source_company": src, "target_company": dst, "candidate_relation": rel,
+                "verification_query": verification_query, "verification_status": "低｜未找到公開證據",
+                "trend_signal": "待確認", "evidence_title": "", "domain": "", "url": "",
+            })
+            continue
+        for _, r in result.head(max_results_per_relation).iterrows():
+            conf, trend = classify_verification_status(str(r.get("title", "")), str(r.get("domain", "")))
+            rows.append({
+                "source_company": src, "target_company": dst, "candidate_relation": rel,
+                "verification_query": verification_query, "verification_status": conf,
+                "trend_signal": trend, "evidence_title": r.get("title", ""),
+                "domain": r.get("domain", ""), "url": r.get("url", ""),
+            })
+    return pd.DataFrame(rows)
+
+
+def render_realtime_verification_tab(feed: pd.DataFrame, time_range: str):
+    st.subheader("即時供應鏈驗證")
+    st.caption("V36：根據本次新聞抽出的公司關係，即時用公開新聞/RSS 找供應鏈證據；不再依賴一直養大主檔。")
+    if feed is None or feed.empty:
+        st.info("目前沒有新聞資料。請先搜尋一次。")
+        return
+    v_cols = st.columns(3)
+    max_rel = v_cols[0].slider("最多驗證幾條關係", 3, 20, 8)
+    max_per = v_cols[1].slider("每條關係最多證據", 1, 5, 2)
+    verify_range = v_cols[2].selectbox("驗證搜尋時間範圍", ["最近 24 小時", "最近 3 天", "最近 7 天", "不限時間"], index=2)
+    candidates = build_realtime_verification_candidates(feed, limit=max_rel)
+    st.markdown("### 本次新聞抽出的候選關係")
+    if candidates.empty:
+        st.warning("本次新聞沒有抽出可驗證的公司關係。")
+        return
+    st.dataframe(candidates, use_container_width=True)
+    if st.button("開始即時驗證", type="primary"):
+        with st.spinner("正在即時查詢公開供應鏈證據..."):
+            st.session_state["last_realtime_verification"] = run_realtime_supply_chain_verification(candidates, max_results_per_relation=max_per, time_range=verify_range)
+    verified = st.session_state.get("last_realtime_verification", pd.DataFrame())
+    if verified is not None and not verified.empty:
+        st.markdown("### 即時驗證結果")
+        st.dataframe(verified, use_container_width=True)
+        st.markdown("### 快速閱讀")
+        for _, row in verified.head(20).iterrows():
+            title = row.get("evidence_title", "")
+            url = row.get("url", "")
+            st.markdown(
+                f"""
+                <div style="border:1px solid rgba(128,128,128,0.25);border-radius:12px;padding:10px 12px;margin:8px 0;background:rgba(128,128,128,0.06);">
+                <b>{html.escape(str(row.get('source_company','')))} → {html.escape(str(row.get('target_company','')))}</b><br>
+                關係候選：{html.escape(str(row.get('candidate_relation','')))}<br>
+                確認度：{html.escape(str(row.get('verification_status','')))}｜狀態：{html.escape(str(row.get('trend_signal','')))}<br>
+                證據：<a href="{html.escape(str(url))}" target="_blank">{html.escape(str(title or '無標題'))}</a><br>
+                <small>{html.escape(str(row.get('domain','')))}</small>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+    else:
+        st.info("按下「開始即時驗證」後，這裡會顯示供應鏈證據表。")
+
+
+tab_feed, tab_map, tab_graph, tab_verify, tab_delta, tab_candidates, tab_raw = st.tabs(["統合新聞流", "統合地圖", "產業關係圖", "即時驗證", "Delta Radar", "主檔候選", "原始資料"])
 
 with tab_feed:
     st.subheader("統合新聞流")
-    st.caption("V33：搜尋結果會產生主檔候選清單；先審核再合併，避免垃圾新聞污染供應鏈資料庫。")
+    st.caption("V36：新增即時驗證：根據本次新聞抽出的公司關係，直接查公開資料找供應鏈證據。")
 
     if not feed.empty:
         st.markdown("### 複製新聞包")
@@ -3018,7 +3143,7 @@ with tab_feed:
 
 with tab_map:
     st.subheader("統合地圖 / 供應鏈視圖")
-    st.caption("V33：供應鏈主檔作為背景骨架；搜尋發現的新公司/新關係會先進入候選清單，不直接污染主檔。")
+    st.caption("V36：供應鏈主檔作為背景骨架；搜尋發現的新公司/新關係會先進入候選清單，不直接污染主檔。")
 
     map_sheet_a, map_sheet_b, map_sheet_c, map_sheet_old = st.tabs([
         "方案 A｜供應鏈地理圖",
@@ -3056,6 +3181,9 @@ with tab_map:
 
 with tab_graph:
     render_industry_relationship_page(feed)
+
+with tab_verify:
+    render_realtime_verification_tab(feed, time_range)
 
 with tab_delta:
     render_delta_radar(st.session_state.get("last_snapshot_payload"))
