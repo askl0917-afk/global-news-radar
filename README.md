@@ -1,13 +1,13 @@
-# Global News Radar V29
+# Global News Radar V30
 
-V29 adds freshness filtering to separate RSS push time from actual event freshness.
+V30 adds freshness filtering to separate RSS push time from actual event freshness.
 
 ## Why
 
 RSS / Google News timestamps often mean "recently pushed or aggregated",
 not "the event just happened".
 
-V29 adds an event freshness layer so the radar can classify news as:
+V30 adds an event freshness layer so the radar can classify news as:
 
 - 真新事件
 - 舊事件新包裝

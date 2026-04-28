@@ -22,7 +22,7 @@ from streamlit_folium import st_folium
 
 
 # ============================================================
-# Global News Radar V29
+# Global News Radar V30
 # 投資情報雷達穩定版
 #
 # What changed:
@@ -1811,6 +1811,302 @@ SUPPLY_CHAIN_EDGES = [
     ("Intel", "Google", "客戶 / 雲端需求"), ("AMD", "Google", "客戶 / 雲端需求"), ("Nvidia", "Google", "客戶 / 雲端需求"),
 ]
 
+COMPANY_GEO = {
+    "Nvidia": {"lat": 37.3875, "lon": -121.9630, "country": "United States", "city": "Santa Clara"},
+    "Intel": {"lat": 37.3875, "lon": -121.9630, "country": "United States", "city": "Santa Clara"},
+    "AMD": {"lat": 37.4020, "lon": -121.9770, "country": "United States", "city": "Santa Clara"},
+    "Arm": {"lat": 52.2053, "lon": 0.1218, "country": "United Kingdom", "city": "Cambridge"},
+    "Qualcomm": {"lat": 32.7157, "lon": -117.1611, "country": "United States", "city": "San Diego"},
+    "Apple": {"lat": 37.3349, "lon": -122.0090, "country": "United States", "city": "Cupertino"},
+    "Amazon": {"lat": 47.6062, "lon": -122.3321, "country": "United States", "city": "Seattle"},
+    "AWS": {"lat": 47.6062, "lon": -122.3321, "country": "United States", "city": "Seattle"},
+    "Microsoft": {"lat": 47.6740, "lon": -122.1215, "country": "United States", "city": "Redmond"},
+    "Azure": {"lat": 47.6740, "lon": -122.1215, "country": "United States", "city": "Redmond"},
+    "Google": {"lat": 37.4220, "lon": -122.0841, "country": "United States", "city": "Mountain View"},
+    "Meta": {"lat": 37.4847, "lon": -122.1484, "country": "United States", "city": "Menlo Park"},
+    "Oracle": {"lat": 30.2672, "lon": -97.7431, "country": "United States", "city": "Austin"},
+    "TSMC": {"lat": 24.8138, "lon": 120.9686, "country": "Taiwan", "city": "Hsinchu"},
+    "Samsung": {"lat": 37.5665, "lon": 126.9780, "country": "South Korea", "city": "Seoul"},
+    "Micron": {"lat": 43.6150, "lon": -116.2023, "country": "United States", "city": "Boise"},
+    "SK hynix": {"lat": 37.2796, "lon": 127.4425, "country": "South Korea", "city": "Icheon"},
+    "Broadcom": {"lat": 37.2638, "lon": -121.9630, "country": "United States", "city": "San Jose"},
+    "Marvell": {"lat": 37.3688, "lon": -122.0363, "country": "United States", "city": "Santa Clara"},
+    "Supermicro": {"lat": 37.3541, "lon": -121.9552, "country": "United States", "city": "San Jose"},
+    "Dell": {"lat": 30.2672, "lon": -97.7431, "country": "United States", "city": "Austin"},
+    "HPE": {"lat": 29.7604, "lon": -95.3698, "country": "United States", "city": "Houston"},
+    "Lenovo": {"lat": 39.9042, "lon": 116.4074, "country": "China", "city": "Beijing"},
+}
+
+LAYER_BUCKETS = {
+    "上游": ["上游"],
+    "中游": ["中游"],
+    "平台/OEM": ["平台"],
+    "下游": ["下游", "終端"],
+    "其他": [],
+}
+
+POSITIVE_HINTS = ["surge", "gain", "beat", "raise", "bullish", "strong", "grow", "record", "上修", "受惠", "成長", "強勁", "創新高", "利多"]
+NEGATIVE_HINTS = ["fall", "drop", "cut", "risk", "probe", "ban", "delay", "weak", "down", "miss", "下跌", "下修", "風險", "壓力", "禁令", "衝擊", "利空"]
+
+def classify_company_status(texts: list) -> str:
+    joined = ' '.join([str(x or '') for x in texts]).lower()
+    pos = sum(1 for k in POSITIVE_HINTS if k.lower() in joined)
+    neg = sum(1 for k in NEGATIVE_HINTS if k.lower() in joined)
+    if pos >= neg + 2:
+        return '正向'
+    if neg >= pos + 2:
+        return '負向'
+    return '中性/觀察'
+
+
+def layer_bucket(layer_text: str) -> str:
+    layer_text = str(layer_text or '')
+    for bucket, keys in LAYER_BUCKETS.items():
+        if any(k in layer_text for k in keys):
+            return bucket
+    return '其他'
+
+
+def build_company_supply_chain_snapshot(feed: pd.DataFrame, max_news: int = 80):
+    nodes_df, edges_df, summary = build_industry_relationships(feed, max_news=max_news)
+    if nodes_df is None or nodes_df.empty:
+        return pd.DataFrame(), pd.DataFrame(), summary
+
+    companies = nodes_df[nodes_df['type'] == '公司'].copy()
+    if companies.empty:
+        return pd.DataFrame(), pd.DataFrame(), summary
+
+    companies['layer_bucket'] = companies['layer'].apply(layer_bucket)
+    companies['country'] = companies['node'].map(lambda x: COMPANY_GEO.get(x, {}).get('country', ''))
+    companies['city'] = companies['node'].map(lambda x: COMPANY_GEO.get(x, {}).get('city', ''))
+    companies['lat'] = companies['node'].map(lambda x: COMPANY_GEO.get(x, {}).get('lat'))
+    companies['lon'] = companies['node'].map(lambda x: COMPANY_GEO.get(x, {}).get('lon'))
+
+    article_rows = []
+    if feed is not None and not feed.empty:
+        news = feed[feed['data_type'] == '公司/財經新聞'].copy()
+        for _, row in news.iterrows():
+            text = ' '.join([str(row.get('title', '')), str(row.get('title_zh', '')), str(row.get('summary', '')), str(row.get('category', ''))])
+            comps = extract_companies_from_text(text)
+            for comp in comps:
+                article_rows.append({
+                    'company': comp,
+                    'title_zh': row.get('title_zh') or row.get('title') or '',
+                    'category': row.get('category', ''),
+                    'importance': row.get('importance', ''),
+                    'freshness_label': row.get('freshness_label', ''),
+                    'text': text,
+                    'url': row.get('url', ''),
+                })
+    article_df = pd.DataFrame(article_rows)
+
+    if not article_df.empty:
+        grouped = article_df.groupby('company')
+        companies['news_hits'] = companies['node'].map(grouped.size()).fillna(0).astype(int)
+        companies['status'] = companies['node'].map(lambda x: classify_company_status(grouped.get_group(x)['text'].tolist()) if x in grouped.groups else '中性/觀察')
+        companies['top_news'] = companies['node'].map(lambda x: '｜'.join(grouped.get_group(x)['title_zh'].head(3).tolist()) if x in grouped.groups else '')
+        companies['top_categories'] = companies['node'].map(lambda x: '、'.join(pd.Series(grouped.get_group(x)['category']).dropna().astype(str).value_counts().head(3).index.tolist()) if x in grouped.groups else '')
+    else:
+        companies['news_hits'] = companies['count']
+        companies['status'] = '中性/觀察'
+        companies['top_news'] = ''
+        companies['top_categories'] = ''
+
+    if edges_df is None or edges_df.empty:
+        edges = pd.DataFrame(columns=['source','target','relation','strength','evidence'])
+    else:
+        edges = edges_df.copy()
+        edges['edge_group'] = '其他'
+        edges.loc[edges['relation'].str.contains('供應|客戶|代工|平台|雲端', na=False), 'edge_group'] = '供應鏈'
+        edges.loc[edges['relation'].str.contains('競爭|替代|威脅', na=False), 'edge_group'] = '競爭'
+        edges.loc[edges['relation'].str.contains('事件影響|題材', na=False), 'edge_group'] = '事件傳導'
+
+    return companies.sort_values(['news_hits', 'count', 'node'], ascending=[False, False, True]), edges, summary
+
+
+def render_company_cards(df: pd.DataFrame, title: str):
+    st.markdown(f"#### {title}")
+    if df is None or df.empty:
+        st.info('目前無資料')
+        return
+    for _, row in df.iterrows():
+        company = row.get('node', '')
+        layer = row.get('layer', '')
+        status = row.get('status', '中性/觀察')
+        hits = int(row.get('news_hits', row.get('count', 0) or 0))
+        categories = row.get('top_categories', '')
+        top_news = row.get('top_news', '')
+        color = '#16a34a' if status == '正向' else ('#dc2626' if status == '負向' else '#f59e0b')
+        st.markdown(
+            f"""
+            <div style="border:1px solid rgba(128,128,128,0.25);border-radius:12px;padding:10px 12px;margin:8px 0;background:rgba(128,128,128,0.06);">
+                <div style="font-weight:800;font-size:1rem;">{company}</div>
+                <div style="font-size:0.86rem;opacity:0.8;">{layer}</div>
+                <div style="margin-top:6px;font-size:0.9rem;">
+                    <span style="display:inline-block;padding:2px 8px;border-radius:999px;background:{color};color:white;font-size:0.78rem;">{status}</span>
+                    <span style="margin-left:8px;">提及 {hits} 次</span>
+                </div>
+                <div style="margin-top:6px;font-size:0.84rem;opacity:0.85;">主題：{categories or '—'}</div>
+                <div style="margin-top:6px;font-size:0.82rem;opacity:0.72;">{(top_news or '暫無摘要')[:120]}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def draw_supply_chain_geo_map(companies_df: pd.DataFrame, edges_df: pd.DataFrame):
+    m = folium.Map(location=[22, 10], zoom_start=2, min_zoom=1, tiles='CartoDB positron', control_scale=True, world_copy_jump=True)
+    if companies_df is None or companies_df.empty:
+        return m
+
+    supply_fg = folium.FeatureGroup(name='供應鏈連線', show=True).add_to(m)
+    compete_fg = folium.FeatureGroup(name='競爭連線', show=False).add_to(m)
+    event_fg = folium.FeatureGroup(name='事件傳導', show=False).add_to(m)
+    node_fg = folium.FeatureGroup(name='公司節點', show=True).add_to(m)
+
+    company_lookup = companies_df.set_index('node').to_dict('index')
+
+    if edges_df is not None and not edges_df.empty:
+        for _, row in edges_df.iterrows():
+            src = row.get('source')
+            dst = row.get('target')
+            if src not in company_lookup or dst not in company_lookup:
+                continue
+            s = company_lookup[src]
+            d = company_lookup[dst]
+            if pd.isna(s.get('lat')) or pd.isna(d.get('lat')):
+                continue
+            group = row.get('edge_group', '其他')
+            color = '#2f80ed' if group == '供應鏈' else ('#eb5757' if group == '競爭' else '#f2994a')
+            target_layer = supply_fg if group == '供應鏈' else (compete_fg if group == '競爭' else event_fg)
+            popup = folium.Popup(f"<b>{html.escape(str(src))} → {html.escape(str(dst))}</b><br>{html.escape(str(row.get('relation','')))}<br><small>{html.escape(str(row.get('evidence','')))}</small>", max_width=360)
+            folium.PolyLine(
+                locations=[(float(s['lat']), float(s['lon'])), (float(d['lat']), float(d['lon']))],
+                color=color,
+                weight=2 + min(int(row.get('strength', 1)), 4),
+                opacity=0.75,
+                popup=popup,
+                tooltip=f"{src} → {dst}｜{row.get('relation','')}",
+            ).add_to(target_layer)
+
+    for _, row in companies_df.iterrows():
+        if pd.isna(row.get('lat')) or pd.isna(row.get('lon')):
+            continue
+        status = row.get('status', '中性/觀察')
+        color = '#16a34a' if status == '正向' else ('#dc2626' if status == '負向' else '#f59e0b')
+        popup = f"""
+        <div style="width:320px;font-size:13px;">
+            <b>{html.escape(str(row.get('node','')))}</b><br>
+            {html.escape(str(row.get('city','')))} / {html.escape(str(row.get('country','')))}<br>
+            角色：{html.escape(str(row.get('layer','')))}<br>
+            狀態：{html.escape(str(status))}<br>
+            提及次數：{int(row.get('news_hits', row.get('count', 0) or 0))}<br>
+            主題：{html.escape(str(row.get('top_categories','')))}<br>
+            <small>{html.escape(str(row.get('top_news','')))}</small>
+        </div>
+        """
+        folium.CircleMarker(
+            location=[float(row['lat']), float(row['lon'])],
+            radius=7 + min(int(row.get('news_hits', row.get('count', 0) or 0)), 8),
+            color='white',
+            weight=1.5,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.9,
+            popup=folium.Popup(popup, max_width=360),
+            tooltip=f"{row.get('node')}｜{row.get('layer_bucket')}｜{status}",
+        ).add_to(node_fg)
+        folium.map.Marker(
+            [float(row['lat']), float(row['lon'])],
+            icon=folium.DivIcon(html=f"<div style='font-size:11px;font-weight:700;white-space:nowrap;background:rgba(255,255,255,0.78);padding:1px 4px;border-radius:6px;'>{html.escape(str(row.get('node')))}</div>")
+        ).add_to(node_fg)
+
+    folium.LayerControl(collapsed=True).add_to(m)
+    return m
+
+
+def render_supply_chain_layered_sheet(companies_df: pd.DataFrame, edges_df: pd.DataFrame):
+    st.caption('方案 B：直接看上游 / 中游 / 平台 / 下游的分層狀況，比地圖更接近真正的供應鏈閱讀方式。')
+    if companies_df is None or companies_df.empty:
+        st.info('目前沒有足夠公司資料可建立供應鏈分層圖。')
+        return
+
+    layer_order = ['上游', '中游', '平台/OEM', '下游', '其他']
+    cols = st.columns(len(layer_order))
+    for idx, bucket in enumerate(layer_order):
+        with cols[idx]:
+            render_company_cards(companies_df[companies_df['layer_bucket'] == bucket].head(8), bucket)
+
+    st.markdown('### 供應鏈傳導表')
+    if edges_df is None or edges_df.empty:
+        st.info('目前沒有明確的供應鏈連線。')
+    else:
+        show = edges_df[edges_df['edge_group'].isin(['供應鏈', '事件傳導', '競爭'])].copy()
+        st.dataframe(show[['source', 'target', 'edge_group', 'relation', 'strength', 'evidence']].head(80), use_container_width=True)
+
+
+def render_map_with_panel_sheet(companies_df: pd.DataFrame, edges_df: pd.DataFrame):
+    st.caption('方案 C：左邊看地圖，右邊看公司狀態面板；適合你直接點一家公司，立刻看上下游、競爭與新聞。')
+    if companies_df is None or companies_df.empty:
+        st.info('目前沒有足夠公司資料可建立公司面板。')
+        return
+
+    company_list = companies_df['node'].dropna().tolist()
+    default_index = 0
+    selected = st.selectbox('選擇公司節點', company_list, index=default_index)
+    left, right = st.columns([1.3, 1])
+
+    with left:
+        base_map = folium.Map(location=[22, 10], zoom_start=2, min_zoom=1, tiles='CartoDB positron', control_scale=True, world_copy_jump=True)
+        selected_row = companies_df[companies_df['node'] == selected].iloc[0]
+        related = edges_df[(edges_df['source'] == selected) | (edges_df['target'] == selected)].copy() if edges_df is not None and not edges_df.empty else pd.DataFrame()
+        related_nodes = set([selected])
+        if not related.empty:
+            related_nodes.update(related['source'].tolist())
+            related_nodes.update(related['target'].tolist())
+        mini_df = companies_df[companies_df['node'].isin(related_nodes)].copy()
+        mini_lookup = mini_df.set_index('node').to_dict('index')
+        if not related.empty:
+            for _, row in related.iterrows():
+                src, dst = row.get('source'), row.get('target')
+                if src not in mini_lookup or dst not in mini_lookup:
+                    continue
+                s, d = mini_lookup[src], mini_lookup[dst]
+                if pd.isna(s.get('lat')) or pd.isna(d.get('lat')):
+                    continue
+                group = row.get('edge_group', '其他')
+                color = '#2f80ed' if group == '供應鏈' else ('#eb5757' if group == '競爭' else '#f2994a')
+                folium.PolyLine([(float(s['lat']), float(s['lon'])), (float(d['lat']), float(d['lon']))], color=color, weight=3, opacity=0.8, tooltip=f"{src} → {dst}｜{row.get('relation','')}").add_to(base_map)
+        for _, row in mini_df.iterrows():
+            if pd.isna(row.get('lat')) or pd.isna(row.get('lon')):
+                continue
+            is_selected = row.get('node') == selected
+            fill = '#111827' if is_selected else ('#16a34a' if row.get('status') == '正向' else ('#dc2626' if row.get('status') == '負向' else '#f59e0b'))
+            folium.CircleMarker(location=[float(row['lat']), float(row['lon'])], radius=10 if is_selected else 7, color='white', weight=2, fill=True, fill_color=fill, fill_opacity=0.95, tooltip=f"{row.get('node')}｜{row.get('layer')}").add_to(base_map)
+        st_folium(base_map, width=None, height=520, returned_objects=[], key='company_panel_map')
+
+    with right:
+        st.markdown(f"### {selected}")
+        st.markdown(f"**角色：** {selected_row.get('layer', '')}")
+        st.markdown(f"**地點：** {selected_row.get('city', '')}, {selected_row.get('country', '')}")
+        st.markdown(f"**狀態：** {selected_row.get('status', '中性/觀察')}")
+        st.markdown(f"**新聞提及：** {int(selected_row.get('news_hits', selected_row.get('count', 0) or 0))} 次")
+        st.markdown(f"**主題：** {selected_row.get('top_categories', '') or '—'}")
+        st.markdown('**近期新聞摘要：**')
+        st.write(selected_row.get('top_news', '') or '目前沒有摘要。')
+
+        if edges_df is not None and not edges_df.empty:
+            related = edges_df[(edges_df['source'] == selected) | (edges_df['target'] == selected)].copy()
+            up = related[related['relation'].str.contains('供應', na=False)]
+            down = related[related['relation'].str.contains('客戶|雲端|平台', na=False)]
+            comp = related[related['relation'].str.contains('競爭|替代|威脅', na=False)]
+            event = related[related['relation'].str.contains('事件影響|題材', na=False)]
+            st.markdown('**上游 / 供應：** ' + ('、'.join(sorted(set(up['source'].tolist() + up['target'].tolist()) - {selected})) if not up.empty else '—'))
+            st.markdown('**下游 / 客戶：** ' + ('、'.join(sorted(set(down['source'].tolist() + down['target'].tolist()) - {selected})) if not down.empty else '—'))
+            st.markdown('**競爭對手：** ' + ('、'.join(sorted(set(comp['source'].tolist() + comp['target'].tolist()) - {selected})) if not comp.empty else '—'))
+            st.markdown('**事件 / 題材：** ' + ('、'.join(sorted(set(event['source'].tolist() + event['target'].tolist()) - {selected})) if not event.empty else '—'))
+            with st.expander('相關連線明細'):
+                st.dataframe(related[['source', 'target', 'edge_group', 'relation', 'strength', 'evidence']].head(50), use_container_width=True)
 def extract_companies_from_text(text: str) -> list:
     t = (text or "").lower()
     found, seen = [], set()
@@ -1976,7 +2272,7 @@ def build_graph(feed: pd.DataFrame) -> str:
 # UI
 # -------------------------------
 
-st.set_page_config(page_title="Global News Radar V29", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Global News Radar V30", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -2045,7 +2341,7 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V29：投資情報雷達穩定版")
+st.title("🌍 Global News Radar V30：投資情報雷達穩定版")
 
 with st.sidebar:
     st.header("搜尋")
@@ -2325,10 +2621,42 @@ with tab_feed:
             st.dataframe(feed[[c for c in cols if c in feed.columns]], use_container_width=True)
 
 with tab_map:
-    st.subheader("統合地圖")
-    st.caption("紫色數字＝公司/財經新聞來源國家篇數；藍色數字＝全球事件。地圖 popup 只顯示 Top 3，完整內容回到統合新聞流。")
-    m = build_world_map(feed, show_news=show_news_on_map, show_events=show_events_on_map)
-    st_folium(m, width=None, height=520, returned_objects=[], key="world_map")
+    st.subheader("統合地圖 / 供應鏈視圖")
+    st.caption("V30：把你剛剛要的三個方案都先做成不同 sheet（tab），你可以直接比較感覺，再決定保留哪一個。")
+
+    map_sheet_a, map_sheet_b, map_sheet_c, map_sheet_old = st.tabs([
+        "方案 A｜供應鏈地理圖",
+        "方案 B｜供應鏈分層圖",
+        "方案 C｜地圖 + 狀態面板",
+        "舊版｜來源國家地圖",
+    ])
+
+    companies_df, sc_edges_df, sc_summary = build_company_supply_chain_snapshot(feed, max_news=80)
+
+    with map_sheet_a:
+        st.caption("方案 A：地圖上的點改成公司 / 供應鏈節點，線條顯示供應鏈、競爭、事件傳導。")
+        if companies_df.empty:
+            st.info("目前沒有足夠公司資料可建立供應鏈地理圖。建議搜尋 CPU、GPU、AI server、NVIDIA Intel AMD 這類主題。")
+        else:
+            top1, top2, top3 = st.columns(3)
+            top1.metric("公司節點", f"{len(companies_df):,}")
+            top2.metric("供應鏈 / 關係線", f"{len(sc_edges_df):,}")
+            top3.metric("主要公司", "、".join(sc_summary.get('top_companies', [])[:3]) or "—")
+            m_a = draw_supply_chain_geo_map(companies_df, sc_edges_df)
+            st_folium(m_a, width=None, height=560, returned_objects=[], key="world_map_supply_chain")
+            with st.expander("節點資料表"):
+                st.dataframe(companies_df[['node', 'layer_bucket', 'layer', 'status', 'news_hits', 'country', 'city', 'top_categories']].head(80), use_container_width=True)
+
+    with map_sheet_b:
+        render_supply_chain_layered_sheet(companies_df, sc_edges_df)
+
+    with map_sheet_c:
+        render_map_with_panel_sheet(companies_df, sc_edges_df)
+
+    with map_sheet_old:
+        st.caption("舊版保留給你對照：紫色數字＝公司/財經新聞來源國家篇數；藍色數字＝全球事件。")
+        m = build_world_map(feed, show_news=show_news_on_map, show_events=show_events_on_map)
+        st_folium(m, width=None, height=520, returned_objects=[], key="world_map")
 
 with tab_graph:
     render_industry_relationship_page(feed)
