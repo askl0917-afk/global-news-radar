@@ -22,7 +22,7 @@ from streamlit_folium import st_folium
 
 
 # ============================================================
-# Global News Radar V23
+# Global News Radar V24
 # 投資情報雷達穩定版
 #
 # What changed:
@@ -777,6 +777,107 @@ def apply_heat_ranking(df: pd.DataFrame) -> pd.DataFrame:
     return out.sort_values(["heat_score", "_i", "_q", "time_utc"], ascending=[False, True, True, False]).drop(columns=["_i", "_q"])
 
 
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def groq_summarize_events(feed_records: list, user_query: str = "", time_range: str = "") -> str:
+    """Use Groq to summarize top news headlines into analyst-style implications."""
+    if not feed_records:
+        return ""
+
+    api_key = get_groq_api_key()
+    if not api_key:
+        return "Groq API 尚未啟用，因此無法產生 AI 事件總結。"
+
+    lines = []
+    for i, r in enumerate(feed_records[:18], 1):
+        title_zh = clean_text(r.get("title_zh", ""))
+        title = clean_text(r.get("title", ""))
+        domain = clean_text(r.get("domain", ""))
+        category = clean_text(r.get("category", ""))
+        importance = clean_text(r.get("importance", ""))
+        heat = clean_text(str(r.get("heat_score", "")))
+        time_utc = clean_text(str(r.get("time_utc", "")))
+        lines.append(
+            f"{i}. {title_zh or title}\n"
+            f"   原文：{title}\n"
+            f"   來源：{domain}｜類別：{category}｜重要性：{importance}｜熱度：{heat}｜時間：{time_utc}"
+        )
+
+    system_prompt = """
+你是台灣資深科技產業與股票分析師。
+請閱讀一批新聞標題，產生繁體中文「事件總結」。
+目標：讓使用者快速知道這些事件代表什麼、可能影響誰、接下來要追什麼。
+風格：先結論、再分點；不要空泛；不要誇大；明確區分事實與推論；適合手機閱讀。
+
+請用以下格式輸出：
+
+### 總結判斷
+2～3 句話說明這批新聞代表什麼。
+
+### 主要事件
+- ...
+- ...
+- ...
+
+### 可能影響
+- 對產業：...
+- 對主要公司：...
+- 對供應鏈：...
+- 對股價敘事：...
+
+### 需要追蹤
+- ...
+- ...
+""".strip()
+
+    user_prompt = f"""
+使用者查詢：{user_query}
+時間範圍：{time_range}
+
+新聞清單：
+{chr(10).join(lines)}
+""".strip()
+
+    try:
+        client = Groq(api_key=api_key)
+        completion = client.chat.completions.create(
+            model=get_groq_model(),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.15,
+            max_tokens=900,
+        )
+        return completion.choices[0].message.content.strip()
+    except Exception as exc:
+        return f"Groq 事件總結暫時失敗：{exc}"
+
+
+def build_summary_records(feed: pd.DataFrame, max_items: int = 15) -> list:
+    """Select top rows for Groq summary."""
+    if feed is None or feed.empty:
+        return []
+
+    df = feed.copy()
+    if "heat_score" not in df.columns:
+        df["heat_score"] = 0
+
+    if "data_type" in df.columns:
+        df["_type_boost"] = df["data_type"].astype(str).apply(lambda x: 1 if ("公司" in x or "財經" in x) else 0)
+    else:
+        df["_type_boost"] = 0
+
+    importance_order = {"A": 0, "B": 1, "C": 2, "D": 3}
+    df["_i"] = df.get("importance", pd.Series(["D"] * len(df))).map(importance_order).fillna(9)
+    df["time_utc"] = pd.to_datetime(df["time_utc"], errors="coerce", utc=True)
+
+    df = df.sort_values(["_type_boost", "heat_score", "_i", "time_utc"], ascending=[False, False, True, False])
+    cols = ["title_zh", "title", "domain", "category", "importance", "heat_score", "time_utc", "source_quality"]
+    return df[[c for c in cols if c in df.columns]].head(max_items).to_dict("records")
+
+
+
 # -------------------------------
 # RSS Sources
 # -------------------------------
@@ -1496,7 +1597,7 @@ def build_graph(feed: pd.DataFrame) -> str:
 # UI
 # -------------------------------
 
-st.set_page_config(page_title="Global News Radar V23", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Global News Radar V24", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -1565,7 +1666,7 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V23：投資情報雷達穩定版")
+st.title("🌍 Global News Radar V24：投資情報雷達穩定版")
 
 with st.sidebar:
     st.header("搜尋")
@@ -1637,6 +1738,11 @@ with st.sidebar:
     show_news_on_map = st.checkbox("地圖顯示公司/財經新聞", value=True)
     show_events_on_map = st.checkbox("地圖顯示全球事件", value=True)
 
+    st.divider()
+    st.subheader("AI 事件總結")
+    enable_ai_summary = st.checkbox("搜尋後產生 Groq 事件總結", value=True)
+    summary_items = st.slider("總結讀取前幾則新聞", 5, 25, 15, step=5)
+
     search_button = st.button("更新統合新聞流", type="primary", key="update_feed")
 
 # Init session
@@ -1648,6 +1754,8 @@ if "last_success_query" not in st.session_state:
     st.session_state["last_success_query"] = ""
 if "last_query_plan" not in st.session_state:
     st.session_state["last_query_plan"] = {}
+if "last_ai_summary" not in st.session_state:
+    st.session_state["last_ai_summary"] = ""
 
 # Load GDELT events separately. Even if news fails, events can still work.
 events_all = pd.DataFrame()
@@ -1697,6 +1805,16 @@ if not feed.empty:
 else:
     feed = st.session_state["last_feed"]
 
+# Generate AI summary after a fresh search.
+if search_button and enable_ai_summary:
+    with st.spinner("Groq 正在閱讀新聞並產生事件總結..."):
+        records_for_summary = build_summary_records(feed, max_items=summary_items)
+        st.session_state["last_ai_summary"] = groq_summarize_events(
+            records_for_summary,
+            user_query=query,
+            time_range=time_range,
+        )
+
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("統合新聞流", f"{len(feed):,}")
 col2.metric("公司/財經新聞", f"{len(articles):,}")
@@ -1721,7 +1839,12 @@ tab_feed, tab_map, tab_graph, tab_raw = st.tabs(["統合新聞流", "統合地�
 
 with tab_feed:
     st.subheader("統合新聞流")
-    st.caption("V23：預設最近 8 小時 AI / 半導體熱度搜尋；排序優先看熱度分數，再看重要性、來源品質與時間。")
+    st.caption("V24：Groq 會先讀取高熱度新聞，在最上方產生事件總結、可能影響與追蹤重點。")
+
+    if st.session_state.get("last_ai_summary"):
+        st.markdown("### AI 事件總結")
+        st.markdown(st.session_state["last_ai_summary"])
+        st.divider()
 
     if feed.empty:
         st.info("尚未查到資料。請打開側欄設定關鍵字後按「更新統合新聞流」。")
