@@ -1,25 +1,29 @@
-# Global News Radar V27
+# Global News Radar V28
 
-V27 removes the App-side Groq event summary and keeps one-click news bundle export.
+V28 adds one-click copy-to-clipboard for the Markdown news bundle.
 
 ## Why
 
-The App should focus on:
-- fetching news
-- ranking by heat
-- translating only top items when needed
-- building industry relationship graphs
-- exporting a clean research bundle
+The user wants to avoid:
+- downloading files
+- finding the file in iOS Files
+- uploading it back to ChatGPT
 
-Long-form event interpretation can be done in ChatGPT by uploading the Markdown bundle.
-This saves Groq tokens and avoids hitting daily limits.
+V28 changes the workflow to:
+
+```text
+Search news in the App
+→ Press "一鍵複製 Markdown 新聞包"
+→ Open ChatGPT
+→ Paste directly
+```
 
 ## What changed
 
-Removed:
-- Groq 事件總結
-- 總結讀取前幾則新聞
-- 事件總結模型 light/heavy
+Added:
+- 一鍵複製 Markdown 新聞包
+- 手動複製備用區
+- 下載備用區
 
 Kept:
 - Natural-language research search
@@ -27,18 +31,15 @@ Kept:
 - Groq dual-model translation controls
 - Heat score ranking
 - Industry relationship graph
-- Markdown / CSV news bundle downloads
+- Markdown / CSV download fallback
 
-## Recommended workflow
+Removed earlier:
+- App-side Groq long summary
 
-1. Search and rank news in the App.
-2. Download Markdown 新聞包.
-3. Upload the Markdown to ChatGPT.
-4. Ask ChatGPT to produce:
-   - event summary
-   - impact matrix
-   - company / supply-chain implications
-   - follow-up tracking list
+## Notes
+
+Some mobile browsers may block automatic clipboard access inside embedded components.
+If that happens, use the "手動複製備用區" text area.
 
 ## Recommended Streamlit Secrets
 
