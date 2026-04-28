@@ -1,45 +1,60 @@
-# Global News Radar V28
+# Global News Radar V29
 
-V28 adds one-click copy-to-clipboard for the Markdown news bundle.
+V29 adds freshness filtering to separate RSS push time from actual event freshness.
 
 ## Why
 
-The user wants to avoid:
-- downloading files
-- finding the file in iOS Files
-- uploading it back to ChatGPT
+RSS / Google News timestamps often mean "recently pushed or aggregated",
+not "the event just happened".
 
-V28 changes the workflow to:
+V29 adds an event freshness layer so the radar can classify news as:
 
-```text
-Search news in the App
-→ Press "一鍵複製 Markdown 新聞包"
-→ Open ChatGPT
-→ Paste directly
-```
+- 真新事件
+- 舊事件新包裝
+- 重複推送
+- 誤抓 / 垃圾訊號
 
 ## What changed
 
-Added:
-- 一鍵複製 Markdown 新聞包
-- 手動複製備用區
-- 下載備用區
-
-Kept:
-- Natural-language research search
-- 8-hour AI / semiconductor heat radar
-- Groq dual-model translation controls
-- Heat score ranking
-- Industry relationship graph
-- Markdown / CSV download fallback
-
-Removed earlier:
-- App-side Groq long summary
+- Adds 新鮮度模式:
+  - 熱度掃描
+  - 新事件優先
+  - 嚴格新事件
+- Adds fields to news cards:
+  - 新鮮度
+  - 新鮮度理由
+- Ranking now prioritizes:
+  1. freshness_score
+  2. heat_score
+  3. importance
+  4. source quality
+  5. recency
+- Markdown / CSV news bundle now includes freshness labels and reasons.
+- Clear junk signals such as sitemap / old results / irrelevant pages are removed.
+- Re-pushed old events are downgraded.
+- Old-event new analysis can be retained but labeled.
 
 ## Notes
 
-Some mobile browsers may block automatic clipboard access inside embedded components.
-If that happens, use the "手動複製備用區" text area.
+Freshness detection is rule-based and uses:
+- article title
+- URL date patterns
+- source quality
+- category
+- market-moving keywords
+
+It is not full article-body analysis.
+
+## Recommended workflow
+
+1. Use default "新事件優先".
+2. Copy Markdown news bundle.
+3. Paste into ChatGPT.
+4. Ask ChatGPT to verify:
+   - true new events
+   - old-event new packaging
+   - duplicate pushes
+   - junk signals
 
 ## Recommended Streamlit Secrets
 
