@@ -1,15 +1,15 @@
-# Global News Radar V37
+# Global News Radar V38
 
-V37 fixes the A/B/C supply-chain views and makes verification automatic.
+V38 fixes OpenAI-style model companies and map readability.
 
 ## What changed
 
-- Scheme A: company names are high-contrast black text on white labels.
-- Scheme B: now uses news-driven companies and relationships only; master background no longer dominates the view.
-- Scheme C: company labels are always visible on the map, not only on hover/click.
-- Real-time supply-chain verification runs automatically after search.
-- Verification results are merged into A/B/C relation tables and map lines.
-- The `即時驗證` tab remains for reviewing or manually re-running verification.
+- Added OpenAI, Anthropic, xAI, Perplexity, Mistral AI, Cohere, DeepSeek and other AI model / application companies.
+- Company extraction is no longer only limited to `supply_chain_master.csv`; it uses aliases plus a lightweight organization-name fallback.
+- Scheme A/B/C now include OpenAI when the current news mentions it.
+- Map labels are compact, high-contrast, truncated with ellipsis, and offset when companies cluster around the same region.
+- Clicking a node now opens a useful popup with role, location, status, news count, topics and top news links.
+- Scheme C right panel also shows clickable news links.
 
 ## Upload files
 

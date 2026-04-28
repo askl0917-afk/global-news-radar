@@ -23,8 +23,8 @@ from streamlit_folium import st_folium
 
 
 # ============================================================
-# Global News Radar V37
-# 自動驗證供應鏈視圖修正版
+# Global News Radar V38
+# 開放式公司辨識 + 智慧地圖標籤
 #
 # What changed:
 # - Main financial/company news no longer depends only on GDELT DOC API.
@@ -1793,6 +1793,25 @@ COMPANY_CANON = {
     "monolithic power": "Monolithic Power", "mpwr": "Monolithic Power",
     "teradyne": "Teradyne", "ter": "Teradyne",
     "amkor": "Amkor", "amkr": "Amkor",
+    "openai": "OpenAI", "chatgpt": "OpenAI", "sam altman": "OpenAI",
+    "anthropic": "Anthropic", "claude": "Anthropic",
+    "xai": "xAI", "grok": "xAI",
+    "perplexity": "Perplexity",
+    "mistral": "Mistral AI", "mistral ai": "Mistral AI",
+    "cohere": "Cohere",
+    "deepseek": "DeepSeek",
+    "cerebras": "Cerebras",
+    "groq": "Groq",
+    "hugging face": "Hugging Face",
+    "scale ai": "Scale AI",
+    "databricks": "Databricks",
+    "snowflake": "Snowflake",
+    "palantir": "Palantir", "pltr": "Palantir",
+    "servicenow": "ServiceNow", "now": "ServiceNow",
+    "salesforce": "Salesforce", "crm": "Salesforce",
+    "softbank": "SoftBank",
+    "crusoe": "Crusoe",
+    "stargate": "Stargate",
 }
 
 COMPANY_LAYER = {
@@ -1814,6 +1833,25 @@ COMPANY_LAYER = {
     "Lam Research": "半導體設備", "Applied Materials": "半導體設備", "KLA": "半導體設備",
     "Synopsys": "EDA / IP", "Cadence": "EDA / IP", "Monolithic Power": "電源 IC",
     "Teradyne": "半導體測試", "Amkor": "封裝測試 / OSAT",
+    "OpenAI": "下游 AI 應用 / 模型平台",
+    "Anthropic": "下游 AI 應用 / 模型平台",
+    "xAI": "下游 AI 應用 / 模型平台",
+    "Perplexity": "下游 AI 應用 / AI Search",
+    "Mistral AI": "下游 AI 應用 / 模型平台",
+    "Cohere": "下游 AI 應用 / 模型平台",
+    "DeepSeek": "下游 AI 應用 / 模型平台",
+    "Cerebras": "中游晶片 / AI 加速器",
+    "Groq": "中游晶片 / AI 推論",
+    "Hugging Face": "AI 平台 / 模型生態",
+    "Scale AI": "AI 資料服務",
+    "Databricks": "資料平台 / AI 軟體",
+    "Snowflake": "資料平台 / AI 軟體",
+    "Palantir": "AI 軟體 / 國防企業",
+    "ServiceNow": "企業軟體 / AI 應用",
+    "Salesforce": "企業軟體 / AI 應用",
+    "SoftBank": "投資 / AI 基建",
+    "Crusoe": "下游 AI Cloud / Data Center",
+    "Stargate": "AI 基建專案",
 }
 
 TOPIC_KEYWORDS = {
@@ -1842,6 +1880,10 @@ COMPETITION_PAIRS = {
     tuple(sorted(["Google", "Amazon"])): "雲端 AI 基建 / 自研晶片競爭",
     tuple(sorted(["Microsoft", "Google"])): "雲端 AI 基建競爭",
     tuple(sorted(["Microsoft", "Amazon"])): "雲端 AI 基建競爭",
+    tuple(sorted(["OpenAI", "Anthropic"])): "前沿模型競爭",
+    tuple(sorted(["OpenAI", "xAI"])): "前沿模型 / AI 助理競爭",
+    tuple(sorted(["OpenAI", "Google"])): "模型與 AI 搜尋 / 雲端競爭",
+    tuple(sorted(["OpenAI", "Meta"])): "模型生態競爭",
 }
 
 SUPPLY_CHAIN_EDGES = [
@@ -1853,6 +1895,15 @@ SUPPLY_CHAIN_EDGES = [
     ("Intel", "AWS", "客戶 / 雲端需求"), ("AMD", "AWS", "客戶 / 雲端需求"), ("Nvidia", "AWS", "客戶 / 雲端需求"),
     ("Intel", "Azure", "客戶 / 雲端需求"), ("AMD", "Azure", "客戶 / 雲端需求"), ("Nvidia", "Azure", "客戶 / 雲端需求"),
     ("Intel", "Google", "客戶 / 雲端需求"), ("AMD", "Google", "客戶 / 雲端需求"), ("Nvidia", "Google", "客戶 / 雲端需求"),
+    ("Nvidia", "OpenAI", "客戶 / AI GPU 算力需求"),
+    ("Microsoft", "OpenAI", "投資 / 雲端合作"),
+    ("Azure", "OpenAI", "雲端算力 / 模型訓練"),
+    ("Oracle", "OpenAI", "雲端算力 / 資料中心合作"),
+    ("AMD", "OpenAI", "AI 加速器 / 潛在算力需求"),
+    ("Broadcom", "OpenAI", "ASIC / 自研晶片候選"),
+    ("TSMC", "OpenAI", "自研晶片 / 代工候選"),
+    ("SoftBank", "OpenAI", "投資 / AI 基建"),
+    ("Crusoe", "OpenAI", "AI Cloud / 資料中心候選"),
 ]
 
 COMPANY_GEO = {
@@ -1911,6 +1962,25 @@ COMPANY_GEO = {
     "Monolithic Power": {"lat": 37.3688, "lon": -122.0363, "country": "United States", "city": "San Jose"},
     "Teradyne": {"lat": 42.3601, "lon": -71.0589, "country": "United States", "city": "Boston"},
     "Amkor": {"lat": 33.4484, "lon": -112.0740, "country": "United States", "city": "Tempe"},
+    "OpenAI": {"lat": 37.7749, "lon": -122.4194, "country": "United States", "city": "San Francisco"},
+    "Anthropic": {"lat": 37.7749, "lon": -122.4194, "country": "United States", "city": "San Francisco"},
+    "xAI": {"lat": 37.3382, "lon": -121.8863, "country": "United States", "city": "San Jose"},
+    "Perplexity": {"lat": 37.7749, "lon": -122.4194, "country": "United States", "city": "San Francisco"},
+    "Mistral AI": {"lat": 48.8566, "lon": 2.3522, "country": "France", "city": "Paris"},
+    "Cohere": {"lat": 43.6532, "lon": -79.3832, "country": "Canada", "city": "Toronto"},
+    "DeepSeek": {"lat": 30.2741, "lon": 120.1551, "country": "China", "city": "Hangzhou"},
+    "Cerebras": {"lat": 37.4419, "lon": -122.1430, "country": "United States", "city": "Sunnyvale"},
+    "Groq": {"lat": 37.3688, "lon": -122.0363, "country": "United States", "city": "Mountain View"},
+    "Hugging Face": {"lat": 40.7128, "lon": -74.0060, "country": "United States", "city": "New York"},
+    "Scale AI": {"lat": 37.7749, "lon": -122.4194, "country": "United States", "city": "San Francisco"},
+    "Databricks": {"lat": 37.7749, "lon": -122.4194, "country": "United States", "city": "San Francisco"},
+    "Snowflake": {"lat": 37.5630, "lon": -122.3255, "country": "United States", "city": "Bozeman/San Mateo"},
+    "Palantir": {"lat": 39.7392, "lon": -104.9903, "country": "United States", "city": "Denver"},
+    "ServiceNow": {"lat": 37.3382, "lon": -121.8863, "country": "United States", "city": "Santa Clara"},
+    "Salesforce": {"lat": 37.7749, "lon": -122.4194, "country": "United States", "city": "San Francisco"},
+    "SoftBank": {"lat": 35.6762, "lon": 139.6503, "country": "Japan", "city": "Tokyo"},
+    "Crusoe": {"lat": 39.7392, "lon": -104.9903, "country": "United States", "city": "Denver"},
+    "Stargate": {"lat": 30.2672, "lon": -97.7431, "country": "United States", "city": "Texas"},
 }
 
 LAYER_BUCKETS = {
@@ -2279,9 +2349,10 @@ def build_company_supply_chain_snapshot(feed: pd.DataFrame, max_news: int = 80):
         companies['news_hits'] = companies['node'].map(grouped.size()).fillna(0).astype(int)
         companies['status'] = companies['node'].map(lambda x: classify_company_status(grouped.get_group(x)['text'].tolist()) if x in grouped.groups else '中性/觀察')
         companies['top_news'] = companies['node'].map(lambda x: '｜'.join(grouped.get_group(x)['title_zh'].head(3).tolist()) if x in grouped.groups else '')
+        companies['top_urls'] = companies['node'].map(lambda x: '｜'.join(grouped.get_group(x)['url'].dropna().astype(str).head(3).tolist()) if x in grouped.groups else '')
         companies['top_categories'] = companies['node'].map(lambda x: '、'.join(pd.Series(grouped.get_group(x)['category']).dropna().astype(str).value_counts().head(3).index.tolist()) if x in grouped.groups else '')
     else:
-        companies['news_hits'] = companies['count']; companies['status'] = '中性/觀察'; companies['top_news'] = ''; companies['top_categories'] = ''
+        companies['news_hits'] = companies['count']; companies['status'] = '中性/觀察'; companies['top_news'] = ''; companies['top_urls'] = ''; companies['top_categories'] = ''
 
     if edges_df is None or edges_df.empty:
         edges = pd.DataFrame(columns=['source','target','relation','strength','evidence','edge_group','confidence','supply_chain_status','trend_signal'])
@@ -2296,6 +2367,7 @@ def build_company_supply_chain_snapshot(feed: pd.DataFrame, max_news: int = 80):
         edges['master_status'] = ''; edges['master_confidence'] = ''; edges['change_reason'] = ''; edges['evidence_url'] = ''
 
     companies, edges = overlay_master_supply_chain(companies, edges, load_supply_chain_master())
+    companies = add_display_offsets(companies)
     return companies.sort_values(['news_hits', 'count', 'node'], ascending=[False, False, True]), edges, summary
 
 
@@ -2330,23 +2402,105 @@ def render_company_cards(df: pd.DataFrame, title: str):
 
 
 
-def company_label_html(name: str, selected: bool = False) -> str:
-    """High-contrast permanent map label."""
-    bg = "rgba(255,255,255,0.96)"
-    border = "#111827" if selected else "#334155"
-    color = "#111827"
-    size = "13px" if selected else "12px"
-    weight = "900" if selected else "800"
+def company_label_html(name: str, selected: bool = False, compact: bool = False) -> str:
+    """High-contrast but compact map label.
+
+    The previous label was readable but too sticky/overlapping. This version:
+    - has max width + ellipsis
+    - uses pointer-events none so clicking marker remains easy
+    - avoids transform that caused labels to pile up
+    """
     safe = html.escape(str(name or ""))
+    maxw = "86px" if compact and not selected else ("118px" if not selected else "150px")
+    size = "11px" if compact and not selected else ("12px" if not selected else "13px")
+    border = "#111827" if selected else "#475569"
+    bg = "rgba(255,255,255,0.94)"
     return (
         f"<div style='"
-        f"font-size:{size};font-weight:{weight};color:{color} !important;"
-        f"white-space:nowrap;background:{bg};padding:3px 7px;border-radius:8px;"
-        f"border:1.5px solid {border};box-shadow:0 2px 7px rgba(0,0,0,0.32);"
-        f"line-height:1.15;letter-spacing:0.1px;transform:translate(10px,-8px);"
-        f"z-index:9999;position:relative;'>"
+        f"font-size:{size};font-weight:850;color:#111827 !important;"
+        f"max-width:{maxw};overflow:hidden;text-overflow:ellipsis;"
+        f"white-space:nowrap;background:{bg};padding:2px 6px;border-radius:7px;"
+        f"border:1px solid {border};box-shadow:0 1px 4px rgba(0,0,0,0.28);"
+        f"line-height:1.15;letter-spacing:0.1px;pointer-events:none;'>"
         f"{safe}</div>"
     )
+
+
+def add_display_offsets(companies_df: pd.DataFrame) -> pd.DataFrame:
+    """Offset companies with same/near coordinates to reduce marker/label overlap."""
+    if companies_df is None or companies_df.empty:
+        return companies_df
+    out = companies_df.copy()
+    if "lat" not in out.columns or "lon" not in out.columns:
+        return out
+    out["display_lat"] = out["lat"]
+    out["display_lon"] = out["lon"]
+
+    valid = out.dropna(subset=["lat", "lon"]).copy()
+    if valid.empty:
+        return out
+
+    # Group by close coordinates. Bay Area / Taipei clusters otherwise become unreadable.
+    valid["_geo_bucket"] = valid.apply(lambda r: f"{round(float(r['lat']), 1)}_{round(float(r['lon']), 1)}", axis=1)
+    for _, idxs in valid.groupby("_geo_bucket").groups.items():
+        idxs = list(idxs)
+        n = len(idxs)
+        if n <= 1:
+            continue
+        # Larger offset for large clusters, still visually close to real HQ area.
+        radius = 0.16 if n >= 6 else 0.10
+        for k, idx in enumerate(idxs):
+            angle = 2 * math.pi * k / n
+            lat = float(out.at[idx, "lat"])
+            lon = float(out.at[idx, "lon"])
+            out.at[idx, "display_lat"] = lat + radius * math.sin(angle)
+            # compensate lon by latitude to keep visual circle reasonable
+            out.at[idx, "display_lon"] = lon + (radius * math.cos(angle) / max(0.35, math.cos(math.radians(lat))))
+    return out
+
+
+def node_lat(row):
+    return float(row.get("display_lat", row.get("lat")))
+
+
+def node_lon(row):
+    return float(row.get("display_lon", row.get("lon")))
+
+
+def build_news_links_html(row, max_links: int = 3) -> str:
+    """Build useful source links for node popups."""
+    titles_raw = str(row.get("top_news", "") or "")
+    urls_raw = str(row.get("top_urls", "") or "")
+    titles = [t.strip() for t in titles_raw.split("｜") if t.strip()]
+    urls = [u.strip() for u in urls_raw.split("｜") if u.strip()]
+    items = []
+    for i, title in enumerate(titles[:max_links]):
+        url = urls[i] if i < len(urls) else ""
+        title_safe = html.escape(title[:100])
+        if url.startswith("http"):
+            items.append(f"<li><a href='{html.escape(url)}' target='_blank'>{title_safe}</a></li>")
+        else:
+            items.append(f"<li>{title_safe}</li>")
+    if not items:
+        return "<small>本次新聞沒有可用連結。</small>"
+    return "<ol style='padding-left:18px;margin:4px 0;'>" + "".join(items) + "</ol>"
+
+
+def node_popup_html(row) -> str:
+    status = str(row.get("status", "中性/觀察"))
+    return f"""
+    <div style="width:340px;font-size:13px;line-height:1.45;">
+        <div style="font-size:16px;font-weight:850;">{html.escape(str(row.get('node','')))}</div>
+        <div>{html.escape(str(row.get('city','')))} / {html.escape(str(row.get('country','')))}</div>
+        <hr style="margin:6px 0;">
+        <b>角色：</b>{html.escape(str(row.get('layer','')))}<br>
+        <b>狀態：</b>{html.escape(status)}<br>
+        <b>新聞提及：</b>{int(row.get('news_hits', row.get('count', 0) or 0))} 次<br>
+        <b>主題：</b>{html.escape(str(row.get('top_categories','') or '—'))}<br>
+        <b>本次新聞：</b>{build_news_links_html(row)}
+    </div>
+    """
+
 
 
 def is_master_background_edge(row) -> bool:
@@ -2475,7 +2629,7 @@ def draw_supply_chain_geo_map(companies_df: pd.DataFrame, edges_df: pd.DataFrame
             ]
             popup = folium.Popup(f"<b>{html.escape(str(src))} → {html.escape(str(dst))}</b><br>{html.escape(str(row.get('relation','')))}<br><small>{html.escape('｜'.join([x for x in evidence_bits if x]))}</small>", max_width=420)
             folium.PolyLine(
-                locations=[(float(s['lat']), float(s['lon'])), (float(d['lat']), float(d['lon']))],
+                locations=[(node_lat(s), node_lon(s)), (node_lat(d), node_lon(d))],
                 color=color,
                 weight=2 + min(int(row.get('strength', 1)), 4),
                 opacity=0.75,
@@ -2488,19 +2642,9 @@ def draw_supply_chain_geo_map(companies_df: pd.DataFrame, edges_df: pd.DataFrame
             continue
         status = row.get('status', '中性/觀察')
         color = '#16a34a' if status == '正向' else ('#dc2626' if status == '負向' else '#f59e0b')
-        popup = f"""
-        <div style="width:320px;font-size:13px;">
-            <b>{html.escape(str(row.get('node','')))}</b><br>
-            {html.escape(str(row.get('city','')))} / {html.escape(str(row.get('country','')))}<br>
-            角色：{html.escape(str(row.get('layer','')))}<br>
-            狀態：{html.escape(str(status))}<br>
-            提及次數：{int(row.get('news_hits', row.get('count', 0) or 0))}<br>
-            主題：{html.escape(str(row.get('top_categories','')))}<br>
-            <small>{html.escape(str(row.get('top_news','')))}</small>
-        </div>
-        """
+        popup = node_popup_html(row)
         folium.CircleMarker(
-            location=[float(row['lat']), float(row['lon'])],
+            location=[node_lat(row), node_lon(row)],
             radius=7 + min(int(row.get('news_hits', row.get('count', 0) or 0)), 8),
             color='white',
             weight=1.5,
@@ -2511,8 +2655,8 @@ def draw_supply_chain_geo_map(companies_df: pd.DataFrame, edges_df: pd.DataFrame
             tooltip=f"{row.get('node')}｜{row.get('layer_bucket')}｜{status}",
         ).add_to(node_fg)
         folium.map.Marker(
-            [float(row['lat']), float(row['lon'])],
-            icon=folium.DivIcon(html=company_label_html(str(row.get('node'))))
+            [node_lat(row), node_lon(row)],
+            icon=folium.DivIcon(icon_size=(96, 22), icon_anchor=(0, 11), html=company_label_html(str(row.get('node')), compact=True))
         ).add_to(node_fg)
 
     folium.LayerControl(collapsed=True).add_to(m)
@@ -2569,7 +2713,7 @@ def render_supply_chain_layered_sheet(companies_df: pd.DataFrame, edges_df: pd.D
                 )
 
 def render_map_with_panel_sheet(companies_df: pd.DataFrame, edges_df: pd.DataFrame):
-    st.caption('方案 C：左邊看地圖，右邊看公司狀態面板；適合你直接點一家公司，立刻看上下游、競爭與新聞。')
+    st.caption('方案 C：左邊看地圖，右邊看公司狀態面板；節點可點擊查看新聞連結、角色、狀態與供應鏈摘要。')
     if companies_df is None or companies_df.empty:
         st.info('目前沒有足夠公司資料可建立公司面板。')
         return
@@ -2599,16 +2743,26 @@ def render_map_with_panel_sheet(companies_df: pd.DataFrame, edges_df: pd.DataFra
                     continue
                 group = row.get('edge_group', '其他')
                 color = '#2f80ed' if group == '供應鏈' else ('#eb5757' if group == '競爭' else '#f2994a')
-                folium.PolyLine([(float(s['lat']), float(s['lon'])), (float(d['lat']), float(d['lon']))], color=color, weight=3, opacity=0.8, tooltip=f"{src} → {dst}｜{row.get('relation','')}").add_to(base_map)
+                folium.PolyLine([(node_lat(s), node_lon(s)), (node_lat(d), node_lon(d))], color=color, weight=3, opacity=0.8, tooltip=f"{src} → {dst}｜{row.get('relation','')}").add_to(base_map)
         for _, row in mini_df.iterrows():
             if pd.isna(row.get('lat')) or pd.isna(row.get('lon')):
                 continue
             is_selected = row.get('node') == selected
             fill = '#111827' if is_selected else ('#16a34a' if row.get('status') == '正向' else ('#dc2626' if row.get('status') == '負向' else '#f59e0b'))
-            folium.CircleMarker(location=[float(row['lat']), float(row['lon'])], radius=10 if is_selected else 7, color='white', weight=2, fill=True, fill_color=fill, fill_opacity=0.95, tooltip=f"{row.get('node')}｜{row.get('layer')}").add_to(base_map)
+            folium.CircleMarker(
+                location=[node_lat(row), node_lon(row)],
+                radius=10 if is_selected else 7,
+                color='white',
+                weight=2,
+                fill=True,
+                fill_color=fill,
+                fill_opacity=0.95,
+                tooltip=f"{row.get('node')}｜{row.get('layer')}",
+                popup=folium.Popup(node_popup_html(row), max_width=380),
+            ).add_to(base_map)
             folium.map.Marker(
-                [float(row['lat']), float(row['lon'])],
-                icon=folium.DivIcon(html=company_label_html(str(row.get('node')), selected=is_selected))
+                [node_lat(row), node_lon(row)],
+                icon=folium.DivIcon(icon_size=(112, 22), icon_anchor=(0, 11), html=company_label_html(str(row.get('node')), selected=is_selected, compact=True))
             ).add_to(base_map)
         st_folium(base_map, width=None, height=520, returned_objects=[], key='company_panel_map')
 
@@ -2619,8 +2773,18 @@ def render_map_with_panel_sheet(companies_df: pd.DataFrame, edges_df: pd.DataFra
         st.markdown(f"**狀態：** {selected_row.get('status', '中性/觀察')}")
         st.markdown(f"**新聞提及：** {int(selected_row.get('news_hits', selected_row.get('count', 0) or 0))} 次")
         st.markdown(f"**主題：** {selected_row.get('top_categories', '') or '—'}")
-        st.markdown('**近期新聞摘要：**')
-        st.write(selected_row.get('top_news', '') or '目前沒有摘要。')
+        st.markdown('**近期新聞摘要 / 連結：**')
+        news_titles = [x for x in str(selected_row.get('top_news', '') or '').split('｜') if x]
+        news_urls = [x for x in str(selected_row.get('top_urls', '') or '').split('｜') if x]
+        if news_titles:
+            for i, t in enumerate(news_titles[:3]):
+                u = news_urls[i] if i < len(news_urls) else ''
+                if u.startswith('http'):
+                    st.markdown(f"- [{t}]({u})")
+                else:
+                    st.markdown(f"- {t}")
+        else:
+            st.write('目前沒有摘要。')
 
         if edges_df is not None and not edges_df.empty:
             related = edges_df[(edges_df['source'] == selected) | (edges_df['target'] == selected)].copy()
@@ -2635,12 +2799,47 @@ def render_map_with_panel_sheet(companies_df: pd.DataFrame, edges_df: pd.DataFra
             with st.expander('相關連線明細'):
                 st.dataframe(related[[c for c in ['source','target','edge_group','relation','confidence','supply_chain_status','trend_signal','verified_status','verified_trend','verified_title','verified_domain','master_status','master_confidence','strength','evidence'] if c in related.columns]].head(50), use_container_width=True)
 def extract_companies_from_text(text: str) -> list:
-    t = (text or "").lower()
+    """Extract company / organization names.
+
+    First use curated aliases. Then add a lightweight fallback for capitalized org-like names,
+    so the view is not hard-limited by supply_chain_master.csv.
+    """
+    raw = text or ""
+    t = raw.lower()
     found, seen = [], set()
     for key, canon in COMPANY_CANON.items():
         pattern = r"\b" + re.escape(key.lower()) + r"\b" if key.isascii() else re.escape(key.lower())
         if re.search(pattern, t) and canon not in seen:
             seen.add(canon); found.append(canon)
+
+    # Fallback: capture org-like title case entities, but filter aggressively to avoid junk.
+    stop = {
+        "AI", "CPU", "GPU", "HBM", "IPO", "The", "A", "An", "And", "Or", "For", "With", "In", "On", "Of",
+        "United States", "Wall Street", "Stock", "Stocks", "Market", "Markets", "Earnings", "Guidance",
+        "Reuters", "Bloomberg", "Yahoo Finance", "Investing", "CNBC", "MarketWatch", "Motley Fool",
+    }
+    suffix_terms = (
+        "AI", "Labs", "Lab", "Technologies", "Technology", "Systems", "Cloud", "Group", "Capital",
+        "Semiconductor", "Semiconductors", "Networks", "Data", "Research", "Investment", "Energy",
+        "Robotics", "Software", "Compute", "Computing", "Partners", "Holdings"
+    )
+    candidates = re.findall(r"\b([A-Z][A-Za-z0-9&.\-]+(?:\s+[A-Z][A-Za-z0-9&.\-]+){0,3})\b", raw)
+    for cand in candidates:
+        cand = re.sub(r"\s+", " ", cand).strip(" -–—|:;,.()[]{}")
+        if not cand or cand in stop or len(cand) < 3:
+            continue
+        if cand in seen:
+            continue
+        if cand in COMPANY_LAYER or cand in COMPANY_GEO:
+            canon = cand
+        elif any(term in cand.split()[-1] or cand.endswith(term) for term in suffix_terms):
+            canon = cand
+            COMPANY_LAYER.setdefault(canon, "其他 / 新聞實體")
+        else:
+            continue
+        if canon not in seen:
+            seen.add(canon); found.append(canon)
+
     return found
 
 def extract_topics_from_text(text: str) -> list:
@@ -2799,7 +2998,7 @@ def build_graph(feed: pd.DataFrame) -> str:
 # UI
 # -------------------------------
 
-st.set_page_config(page_title="Global News Radar V37", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Global News Radar V38", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -2868,7 +3067,7 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V37：自動驗證供應鏈視圖修正版")
+st.title("🌍 Global News Radar V38：開放式公司辨識 + 智慧地圖標籤")
 
 with st.sidebar:
     st.header("搜尋")
@@ -3163,7 +3362,7 @@ def run_realtime_supply_chain_verification(candidates: pd.DataFrame, max_results
 
 def render_realtime_verification_tab(feed: pd.DataFrame, time_range: str):
     st.subheader("即時供應鏈驗證")
-    st.caption("V37：搜尋完成後會自動背景驗證 Top 關係；這頁只是讓你查看結果或手動重跑。")
+    st.caption("V38：搜尋完成後會自動背景驗證 Top 關係；這頁只是讓你查看結果或手動重跑。")
     if feed is None or feed.empty:
         st.info("目前沒有新聞資料。請先搜尋一次。")
         return
@@ -3208,7 +3407,7 @@ tab_feed, tab_map, tab_graph, tab_verify, tab_delta, tab_candidates, tab_raw = s
 
 with tab_feed:
     st.subheader("統合新聞流")
-    st.caption("V37：搜尋後會自動背景驗證供應鏈關係，並直接反映到方案 A/B/C。")
+    st.caption("V38：搜尋後會自動背景驗證供應鏈關係，並直接反映到方案 A/B/C。")
 
     if not feed.empty:
         st.markdown("### 複製新聞包")
@@ -3308,7 +3507,7 @@ with tab_feed:
 
 with tab_map:
     st.subheader("統合地圖 / 供應鏈視圖")
-    st.caption("V37：方案 A/B/C 改成新聞驅動 + 自動驗證；主檔只當背景，不再把固定資料塞進主畫面。")
+    st.caption("V38：公司辨識不再只靠主檔；OpenAI 等模型公司會進入供應鏈視圖。地圖標籤改成錯位、截斷與可點擊資訊卡。")
 
     map_sheet_a, map_sheet_b, map_sheet_c, map_sheet_old = st.tabs([
         "方案 A｜供應鏈地理圖",
@@ -3322,7 +3521,7 @@ with tab_map:
     view_companies_df, view_edges_df = get_news_driven_supply_chain_view(companies_df, sc_edges_df, verified_df)
 
     with map_sheet_a:
-        st.caption("方案 A：新聞驅動供應鏈地理圖。公司名稱改為黑字白底高辨識標籤；線條會套用自動驗證狀態。")
+        st.caption("方案 A：新聞驅動供應鏈地理圖。標籤改成短版黑字白底，並自動錯位避免重疊；點節點可看新聞連結。")
         if view_companies_df.empty:
             st.info("本次新聞沒有足夠公司資料可建立供應鏈地理圖。建議搜尋 CPU、GPU、AI server、NVIDIA Intel AMD 這類主題。")
         else:
