@@ -5,6 +5,7 @@ import json
 import os
 import re
 import zipfile
+from pathlib import Path
 from datetime import datetime, timezone
 from urllib.parse import quote_plus, urlparse
 
@@ -22,8 +23,8 @@ from streamlit_folium import st_folium
 
 
 # ============================================================
-# Global News Radar V30
-# 投資情報雷達穩定版
+# Global News Radar V33
+# 主檔候選增補 + Delta
 #
 # What changed:
 # - Main financial/company news no longer depends only on GDELT DOC API.
@@ -1760,6 +1761,38 @@ COMPANY_CANON = {
     "dell": "Dell", "hpe": "HPE", "hewlett packard": "HPE", "lenovo": "Lenovo",
     "micron": "Micron", "mu": "Micron", "sk hynix": "SK hynix",
     "broadcom": "Broadcom", "avgo": "Broadcom", "marvell": "Marvell", "mrvl": "Marvell",
+    "quanta": "Quanta", "廣達": "Quanta",
+    "wiwynn": "Wiwynn", "緯穎": "Wiwynn",
+    "wistron": "Wistron", "緯創": "Wistron",
+    "inventec": "Inventec", "英業達": "Inventec",
+    "foxconn": "Foxconn", "hon hai": "Foxconn", "鴻海": "Foxconn",
+    "delta": "Delta Electronics", "台達電": "Delta Electronics",
+    "accton": "Accton", "智邦": "Accton",
+    "ase": "ASE", "ase technology": "ASE", "日月光": "ASE",
+    "globalwafers": "GlobalWafers", "環球晶": "GlobalWafers",
+    "mediatek": "MediaTek", "聯發科": "MediaTek",
+    "aspeed": "ASPEED", "信驊": "ASPEED",
+    "guc": "GUC", "創意": "GUC",
+    "alchip": "Alchip", "世芯": "Alchip",
+    "unimicron": "Unimicron", "欣興": "Unimicron",
+    "nanya": "Nanya Tech", "南亞科": "Nanya Tech",
+    "coreweave": "CoreWeave", "crwv": "CoreWeave",
+    "astera labs": "Astera Labs", "alab": "Astera Labs",
+    "arista": "Arista", "anet": "Arista",
+    "vertiv": "Vertiv", "vrt": "Vertiv",
+    "celestica": "Celestica", "cls": "Celestica",
+    "coherent": "Coherent", "cohr": "Coherent",
+    "lumentum": "Lumentum", "lite": "Lumentum",
+    "fabrinet": "Fabrinet", "fn": "Fabrinet",
+    "asml": "ASML",
+    "lam research": "Lam Research", "lrcx": "Lam Research",
+    "applied materials": "Applied Materials", "amat": "Applied Materials",
+    "kla": "KLA", "klac": "KLA",
+    "synopsys": "Synopsys", "snps": "Synopsys",
+    "cadence": "Cadence", "cdns": "Cadence",
+    "monolithic power": "Monolithic Power", "mpwr": "Monolithic Power",
+    "teradyne": "Teradyne", "ter": "Teradyne",
+    "amkor": "Amkor", "amkr": "Amkor",
 }
 
 COMPANY_LAYER = {
@@ -1770,6 +1803,17 @@ COMPANY_LAYER = {
     "Azure": "下游雲端 / CSP", "Google": "下游雲端 / CSP", "Meta": "下游雲端 / CSP", "Oracle": "下游雲端 / CSP",
     "Supermicro": "平台 / 伺服器 OEM", "Dell": "平台 / 伺服器 OEM", "HPE": "平台 / 伺服器 OEM", "Lenovo": "平台 / 伺服器 OEM",
     "Micron": "上游記憶體 / HBM", "SK hynix": "上游記憶體 / HBM", "Broadcom": "網通 / ASIC", "Marvell": "網通 / ASIC",
+    "Quanta": "平台 / 伺服器 ODM", "Wiwynn": "平台 / 伺服器 ODM", "Wistron": "平台 / 伺服器 ODM",
+    "Inventec": "平台 / 伺服器 ODM", "Foxconn": "平台 / 伺服器 ODM",
+    "Delta Electronics": "電源 / 散熱", "Accton": "網通 / 交換器", "ASE": "封裝測試 / OSAT",
+    "GlobalWafers": "上游矽晶圓", "MediaTek": "中游晶片 / SoC", "ASPEED": "伺服器管理晶片",
+    "GUC": "ASIC 設計服務", "Alchip": "ASIC 設計服務", "Unimicron": "ABF / 載板", "Nanya Tech": "上游記憶體 / DRAM",
+    "CoreWeave": "下游雲端 / AI Cloud", "Astera Labs": "連接 / Retimer", "Arista": "網通 / 交換器",
+    "Vertiv": "電源 / 散熱", "Celestica": "平台 / 伺服器 ODM", "Coherent": "光通訊",
+    "Lumentum": "光通訊", "Fabrinet": "光通訊 / 代工", "ASML": "半導體設備",
+    "Lam Research": "半導體設備", "Applied Materials": "半導體設備", "KLA": "半導體設備",
+    "Synopsys": "EDA / IP", "Cadence": "EDA / IP", "Monolithic Power": "電源 IC",
+    "Teradyne": "半導體測試", "Amkor": "封裝測試 / OSAT",
 }
 
 TOPIC_KEYWORDS = {
@@ -1835,6 +1879,38 @@ COMPANY_GEO = {
     "Dell": {"lat": 30.2672, "lon": -97.7431, "country": "United States", "city": "Austin"},
     "HPE": {"lat": 29.7604, "lon": -95.3698, "country": "United States", "city": "Houston"},
     "Lenovo": {"lat": 39.9042, "lon": 116.4074, "country": "China", "city": "Beijing"},
+    "Quanta": {"lat": 25.0330, "lon": 121.5654, "country": "Taiwan", "city": "Taipei"},
+    "Wiwynn": {"lat": 25.0330, "lon": 121.5654, "country": "Taiwan", "city": "Taipei"},
+    "Wistron": {"lat": 25.0330, "lon": 121.5654, "country": "Taiwan", "city": "Taipei"},
+    "Inventec": {"lat": 25.0330, "lon": 121.5654, "country": "Taiwan", "city": "Taipei"},
+    "Foxconn": {"lat": 25.0330, "lon": 121.5654, "country": "Taiwan", "city": "New Taipei"},
+    "Delta Electronics": {"lat": 25.0330, "lon": 121.5654, "country": "Taiwan", "city": "Taipei"},
+    "Accton": {"lat": 24.8138, "lon": 120.9686, "country": "Taiwan", "city": "Hsinchu"},
+    "ASE": {"lat": 22.6273, "lon": 120.3014, "country": "Taiwan", "city": "Kaohsiung"},
+    "GlobalWafers": {"lat": 24.8138, "lon": 120.9686, "country": "Taiwan", "city": "Hsinchu"},
+    "MediaTek": {"lat": 24.8138, "lon": 120.9686, "country": "Taiwan", "city": "Hsinchu"},
+    "ASPEED": {"lat": 24.8138, "lon": 120.9686, "country": "Taiwan", "city": "Hsinchu"},
+    "GUC": {"lat": 24.8138, "lon": 120.9686, "country": "Taiwan", "city": "Hsinchu"},
+    "Alchip": {"lat": 25.0330, "lon": 121.5654, "country": "Taiwan", "city": "Taipei"},
+    "Unimicron": {"lat": 24.9937, "lon": 121.3010, "country": "Taiwan", "city": "Taoyuan"},
+    "Nanya Tech": {"lat": 25.0330, "lon": 121.5654, "country": "Taiwan", "city": "Taipei"},
+    "CoreWeave": {"lat": 40.7128, "lon": -74.0060, "country": "United States", "city": "New York"},
+    "Astera Labs": {"lat": 37.3688, "lon": -122.0363, "country": "United States", "city": "Santa Clara"},
+    "Arista": {"lat": 37.3688, "lon": -122.0363, "country": "United States", "city": "Santa Clara"},
+    "Vertiv": {"lat": 40.4173, "lon": -82.9071, "country": "United States", "city": "Ohio"},
+    "Celestica": {"lat": 43.6532, "lon": -79.3832, "country": "Canada", "city": "Toronto"},
+    "Coherent": {"lat": 40.4406, "lon": -79.9959, "country": "United States", "city": "Pittsburgh"},
+    "Lumentum": {"lat": 37.3688, "lon": -122.0363, "country": "United States", "city": "San Jose"},
+    "Fabrinet": {"lat": 13.7563, "lon": 100.5018, "country": "Thailand", "city": "Bangkok"},
+    "ASML": {"lat": 51.4416, "lon": 5.4697, "country": "Netherlands", "city": "Veldhoven"},
+    "Lam Research": {"lat": 37.5485, "lon": -121.9886, "country": "United States", "city": "Fremont"},
+    "Applied Materials": {"lat": 37.3688, "lon": -122.0363, "country": "United States", "city": "Santa Clara"},
+    "KLA": {"lat": 37.4323, "lon": -121.8996, "country": "United States", "city": "Milpitas"},
+    "Synopsys": {"lat": 37.3688, "lon": -122.0363, "country": "United States", "city": "Sunnyvale"},
+    "Cadence": {"lat": 37.3688, "lon": -122.0363, "country": "United States", "city": "San Jose"},
+    "Monolithic Power": {"lat": 37.3688, "lon": -122.0363, "country": "United States", "city": "San Jose"},
+    "Teradyne": {"lat": 42.3601, "lon": -71.0589, "country": "United States", "city": "Boston"},
+    "Amkor": {"lat": 33.4484, "lon": -112.0740, "country": "United States", "city": "Tempe"},
 }
 
 LAYER_BUCKETS = {
@@ -1867,6 +1943,312 @@ def layer_bucket(layer_text: str) -> str:
     return '其他'
 
 
+
+SNAPSHOT_DIR = Path(".radar_snapshots")
+SUPPLY_CHAIN_MASTER_PATH = Path("supply_chain_master.csv")
+CANDIDATE_PATH = Path(".radar_candidates/supply_chain_candidates.csv")
+
+
+def candidate_columns():
+    return ["candidate_type", "source_company", "target_company", "relation_type", "source_layer", "target_layer", "confidence", "status", "trend", "share_change", "change_reason", "evidence", "evidence_url", "first_seen", "last_seen", "seen_count", "review_status"]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_supply_chain_master() -> pd.DataFrame:
+    cols = ["source_company", "target_company", "relation_type", "source_layer", "target_layer", "confidence", "status", "trend", "share_change", "change_reason", "evidence", "evidence_url", "valid_from", "valid_to", "last_checked"]
+    if SUPPLY_CHAIN_MASTER_PATH.exists():
+        try:
+            df = pd.read_csv(SUPPLY_CHAIN_MASTER_PATH)
+        except Exception:
+            df = pd.DataFrame(columns=cols)
+    else:
+        df = pd.DataFrame(columns=cols)
+    for c in cols:
+        if c not in df.columns:
+            df[c] = ""
+    return df[cols].fillna("")
+
+
+def load_supply_chain_candidates() -> pd.DataFrame:
+    cols = candidate_columns()
+    if CANDIDATE_PATH.exists():
+        try:
+            df = pd.read_csv(CANDIDATE_PATH)
+        except Exception:
+            df = pd.DataFrame(columns=cols)
+    else:
+        df = pd.DataFrame(columns=cols)
+    for c in cols:
+        if c not in df.columns:
+            df[c] = ""
+    df["seen_count"] = pd.to_numeric(df["seen_count"], errors="coerce").fillna(0).astype(int)
+    return df[cols].fillna("")
+
+
+def save_supply_chain_candidates(df: pd.DataFrame):
+    CANDIDATE_PATH.parent.mkdir(exist_ok=True)
+    cols = candidate_columns()
+    for c in cols:
+        if c not in df.columns:
+            df[c] = ""
+    df[cols].to_csv(CANDIDATE_PATH, index=False, encoding="utf-8-sig")
+
+
+def infer_relation_confidence(row) -> str:
+    evidence = str(row.get("evidence", "") or "").lower()
+    relation = str(row.get("relation", "") or "").lower()
+    if "產業字典關係" in evidence or "供應鏈主檔" in evidence:
+        return "低｜背景"
+    explicit_terms = ["supplier", "supply", "customer", "contract", "deal", "selected", "wins", "partnership", "adopts", "order", "qualified", "供應", "客戶", "合約", "合作", "採用", "導入", "訂單", "認證"]
+    if any(t in evidence for t in explicit_terms) or any(t in relation for t in explicit_terms):
+        return "高｜新聞明確線索"
+    if evidence.strip():
+        return "中｜共現 / 題材關聯"
+    return "低｜待確認"
+
+
+def infer_supply_chain_status(row) -> str:
+    text = " ".join([str(row.get("relation", "") or ""), str(row.get("evidence", "") or "")]).lower()
+    exit_terms = ["terminate", "cancel", "drop", "loses", "lost", "exit", "withdraw", "ban", "restriction", "blocked", "delay", "halt", "解約", "取消", "中止", "退出", "禁令", "限制", "延後", "轉單"]
+    add_terms = ["new supplier", "selected", "wins", "signs", "deal", "partnership", "adopts", "order", "ramp", "expands", "qualified", "新增", "入選", "合作", "採用", "導入", "訂單", "擴大", "放量", "認證", "打入"]
+    if any(t in text for t in exit_terms):
+        return "退出 / 中斷風險"
+    if any(t in text for t in add_terms):
+        return "新加入 / 擴大合作候選"
+    if "供應鏈主檔" in text or "產業字典關係" in text:
+        return "既有關係背景"
+    return "待確認"
+
+
+def infer_relationship_trend(row) -> str:
+    text = " ".join([str(row.get("relation", "") or ""), str(row.get("evidence", "") or ""), str(row.get("supply_chain_status", "") or "")]).lower()
+    up_terms = ["expand", "increase", "gain", "wins", "order", "ramp", "qualified", "share gain", "擴大", "增加", "提升", "放量", "訂單", "認證", "打入"]
+    down_terms = ["reduce", "decrease", "loss", "lost", "cut", "cancel", "delay", "ban", "restriction", "share loss", "減少", "下降", "轉單", "取消", "延後", "禁令", "限制"]
+    if any(t in text for t in up_terms):
+        return "份額/合作上升候選"
+    if any(t in text for t in down_terms):
+        return "份額/合作下降風險"
+    return "未偵測明確變化"
+
+
+def master_confidence_label(conf: str) -> str:
+    c = str(conf or "").lower()
+    if c in ["confirmed", "official", "high"]:
+        return "高｜主檔確認"
+    if c in ["likely", "medium"]:
+        return "中｜主檔 likely"
+    if c in ["rumor", "low"]:
+        return "低｜主檔待確認"
+    return "低｜主檔背景"
+
+
+def infer_master_edge_group(relation_type: str) -> str:
+    r = str(relation_type or "").lower()
+    if any(x in r for x in ["competitor", "competition", "競爭"]):
+        return "競爭"
+    if any(x in r for x in ["theme", "impact", "topic", "事件"]):
+        return "事件傳導"
+    return "供應鏈"
+
+
+def normalize_master_status(status: str, trend: str = "", share_change: str = "") -> str:
+    txt = " ".join([str(status or ""), str(trend or ""), str(share_change or "")]).lower()
+    if any(x in txt for x in ["exit", "exited", "reduced", "decrease", "down", "lost", "退出", "減少", "降低", "轉單"]):
+        return "退出 / 份額下降"
+    if any(x in txt for x in ["new", "expanded", "increase", "up", "gain", "新增", "擴大", "增加", "提升"]):
+        return "新加入 / 份額上升"
+    if "active" in txt or "confirmed" in txt:
+        return "既有關係背景"
+    return "待確認"
+
+
+def overlay_master_supply_chain(companies: pd.DataFrame, edges: pd.DataFrame, master: pd.DataFrame):
+    if edges is None or edges.empty:
+        edges = pd.DataFrame(columns=["source", "target", "relation", "strength", "evidence", "edge_group", "confidence", "supply_chain_status", "trend_signal"])
+    if companies is None or companies.empty or master is None or master.empty:
+        return companies, edges
+    companies = companies.copy(); edges = edges.copy()
+    appeared = set(companies["node"].tolist())
+    existing_nodes = set(companies["node"].tolist())
+    add_nodes = []; add_edges = []
+    for _, row in master.iterrows():
+        src = str(row.get("source_company", "")).strip(); dst = str(row.get("target_company", "")).strip()
+        if not src or not dst or not (src in appeared or dst in appeared):
+            continue
+        for comp, layer_col in [(src, "source_layer"), (dst, "target_layer")]:
+            if comp not in existing_nodes:
+                layer = row.get(layer_col, COMPANY_LAYER.get(comp, "公司"))
+                add_nodes.append({"node": comp, "type": "公司", "layer": layer, "count": 0, "layer_bucket": layer_bucket(layer), "country": COMPANY_GEO.get(comp, {}).get("country", ""), "city": COMPANY_GEO.get(comp, {}).get("city", ""), "lat": COMPANY_GEO.get(comp, {}).get("lat"), "lon": COMPANY_GEO.get(comp, {}).get("lon"), "news_hits": 0, "status": "主檔背景", "top_news": "", "top_categories": "供應鏈主檔"})
+                existing_nodes.add(comp)
+        rel_type = str(row.get("relation_type", "") or "master relation")
+        status = normalize_master_status(row.get("status", ""), row.get("trend", ""), row.get("share_change", ""))
+        reason = str(row.get("change_reason", "") or row.get("evidence", "") or "固定供應鏈主檔背景")
+        add_edges.append({"source": src, "target": dst, "relation": f"主檔：{rel_type}", "strength": 1, "evidence": f"供應鏈主檔｜{reason}", "edge_group": infer_master_edge_group(rel_type), "confidence": master_confidence_label(row.get("confidence", "")), "supply_chain_status": status, "trend_signal": status, "master_status": row.get("status", ""), "master_confidence": row.get("confidence", ""), "change_reason": row.get("change_reason", ""), "evidence_url": row.get("evidence_url", "")})
+    if add_nodes:
+        companies = pd.concat([companies, pd.DataFrame(add_nodes)], ignore_index=True).drop_duplicates(subset=["node"], keep="first")
+    if add_edges:
+        edges = pd.concat([edges, pd.DataFrame(add_edges)], ignore_index=True).drop_duplicates(subset=["source", "target", "relation"], keep="first")
+    return companies, edges
+
+
+def build_master_candidate_rows(companies: pd.DataFrame, edges: pd.DataFrame, master: pd.DataFrame) -> pd.DataFrame:
+    rows = []; now = pd.Timestamp.now(tz="Asia/Taipei").strftime("%Y-%m-%d %H:%M:%S")
+    master_companies = set(); master_edges = set()
+    if master is not None and not master.empty:
+        master_companies.update(master["source_company"].dropna().astype(str).str.strip().tolist())
+        master_companies.update(master["target_company"].dropna().astype(str).str.strip().tolist())
+        master_edges = set((master["source_company"].astype(str).str.strip() + "→" + master["target_company"].astype(str).str.strip() + "｜" + master["relation_type"].astype(str).str.strip()).tolist())
+    if companies is not None and not companies.empty:
+        for _, c in companies.iterrows():
+            comp = str(c.get("node", "")).strip()
+            if not comp or comp in master_companies or int(c.get("news_hits", 0) or 0) <= 0:
+                continue
+            rows.append({"candidate_type": "new_company", "source_company": comp, "target_company": "", "relation_type": "company_node", "source_layer": c.get("layer", ""), "target_layer": "", "confidence": "pending", "status": "pending_review", "trend": "", "share_change": "", "change_reason": "搜尋結果出現主檔尚未收錄的公司節點", "evidence": c.get("top_news", ""), "evidence_url": "", "first_seen": now, "last_seen": now, "seen_count": 1, "review_status": "pending"})
+    if edges is not None and not edges.empty:
+        for _, e in edges.iterrows():
+            src = str(e.get("source", "")).strip(); dst = str(e.get("target", "")).strip(); rel = str(e.get("relation", "")).strip()
+            if not src or not dst or not rel or rel.startswith("主檔"):
+                continue
+            key = f"{src}→{dst}｜{rel}"
+            if key in master_edges:
+                continue
+            conf = str(e.get("confidence", "")); evidence = str(e.get("evidence", ""))
+            if conf.startswith("低") and ("產業字典" in evidence or "主檔" in evidence):
+                continue
+            rows.append({"candidate_type": "new_relation", "source_company": src, "target_company": dst, "relation_type": rel, "source_layer": COMPANY_LAYER.get(src, ""), "target_layer": COMPANY_LAYER.get(dst, ""), "confidence": conf or "pending", "status": e.get("supply_chain_status", "待確認"), "trend": e.get("trend_signal", ""), "share_change": "待確認", "change_reason": e.get("supply_chain_status", "待確認"), "evidence": evidence, "evidence_url": "", "first_seen": now, "last_seen": now, "seen_count": 1, "review_status": "pending"})
+    return pd.DataFrame(rows, columns=candidate_columns())
+
+
+def merge_candidates(new_candidates: pd.DataFrame) -> pd.DataFrame:
+    old = load_supply_chain_candidates()
+    if new_candidates is None or new_candidates.empty:
+        return old
+    combined = old.copy(); now = pd.Timestamp.now(tz="Asia/Taipei").strftime("%Y-%m-%d %H:%M:%S")
+    def key_of(row):
+        if row.get("candidate_type") == "new_company":
+            return f"company::{row.get('source_company','')}"
+        return f"relation::{row.get('source_company','')}→{row.get('target_company','')}｜{row.get('relation_type','')}"
+    combined["_key"] = combined.apply(key_of, axis=1) if not combined.empty else []
+    for _, row in new_candidates.iterrows():
+        key = key_of(row)
+        if not combined.empty and key in set(combined["_key"]):
+            idx = combined.index[combined["_key"] == key][0]
+            combined.at[idx, "last_seen"] = now
+            combined.at[idx, "seen_count"] = int(combined.at[idx, "seen_count"] or 0) + 1
+            if len(str(row.get("evidence", ""))) > len(str(combined.at[idx, "evidence"])):
+                combined.at[idx, "evidence"] = row.get("evidence", "")
+        else:
+            d = row.to_dict(); d["first_seen"] = d.get("first_seen") or now; d["last_seen"] = now; d["seen_count"] = int(d.get("seen_count") or 1); d["review_status"] = d.get("review_status") or "pending"; d["_key"] = key
+            combined = pd.concat([combined, pd.DataFrame([d])], ignore_index=True)
+    combined = combined.drop(columns=["_key"], errors="ignore")
+    save_supply_chain_candidates(combined)
+    return combined
+
+
+def minimal_snapshot_payload(feed: pd.DataFrame, companies: pd.DataFrame, edges: pd.DataFrame, query: str, time_range: str, freshness_mode: str) -> dict:
+    def safe_records(df, cols, limit):
+        if df is None or df.empty:
+            return []
+        keep = [c for c in cols if c in df.columns]
+        return df[keep].head(limit).astype(str).to_dict("records")
+    return {"created_at": pd.Timestamp.now(tz="Asia/Taipei").isoformat(), "query": query, "time_range": time_range, "freshness_mode": freshness_mode, "news": safe_records(feed, ["time_utc", "title_zh", "title", "url", "domain", "category", "importance", "heat_score", "freshness_label"], 80), "companies": safe_records(companies, ["node", "layer", "layer_bucket", "status", "news_hits", "top_categories"], 80), "edges": safe_records(edges, ["source", "target", "relation", "edge_group", "confidence", "supply_chain_status", "trend_signal", "strength", "evidence"], 120)}
+
+
+def cleanup_snapshots(max_files: int = 30, max_days: int = 14):
+    SNAPSHOT_DIR.mkdir(exist_ok=True)
+    now = pd.Timestamp.now(tz="UTC").timestamp()
+    for p in sorted(SNAPSHOT_DIR.glob("snapshot_*.json"), key=lambda x: x.stat().st_mtime, reverse=True):
+        if (now - p.stat().st_mtime) / 86400 > max_days:
+            try: p.unlink()
+            except Exception: pass
+    files = sorted(SNAPSHOT_DIR.glob("snapshot_*.json"), key=lambda x: x.stat().st_mtime, reverse=True)
+    for p in files[max_files:]:
+        try: p.unlink()
+        except Exception: pass
+
+
+def save_snapshot(payload: dict, max_files: int = 30, max_days: int = 14) -> str:
+    SNAPSHOT_DIR.mkdir(exist_ok=True); cleanup_snapshots(max_files, max_days)
+    path = SNAPSHOT_DIR / f"snapshot_{pd.Timestamp.now(tz='Asia/Taipei').strftime('%Y%m%d_%H%M%S')}.json"
+    try:
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"); cleanup_snapshots(max_files, max_days); return str(path)
+    except Exception:
+        return ""
+
+
+def load_snapshots(limit: int = 12) -> list:
+    SNAPSHOT_DIR.mkdir(exist_ok=True); out = []
+    for p in sorted(SNAPSHOT_DIR.glob("snapshot_*.json"), key=lambda x: x.stat().st_mtime, reverse=True)[:limit]:
+        try: out.append(json.loads(p.read_text(encoding="utf-8")))
+        except Exception: pass
+    return out
+
+
+def compare_snapshots(current: dict, previous: dict) -> dict:
+    def edge_key(e): return f"{e.get('source','')}→{e.get('target','')}｜{e.get('relation','')}"
+    curr = {edge_key(e): e for e in current.get("edges", [])}; prev = {edge_key(e): e for e in previous.get("edges", [])} if previous else {}
+    changed = []
+    for k in curr.keys() & prev.keys():
+        c, p = curr[k], prev[k]
+        if c.get("supply_chain_status") != p.get("supply_chain_status") or c.get("trend_signal") != p.get("trend_signal"):
+            changed.append({"key": k, "before": p, "after": c})
+    curr_c = {c.get("node", ""): c for c in current.get("companies", [])}; prev_c = {c.get("node", ""): c for c in previous.get("companies", [])} if previous else {}
+    return {"added_edges": [curr[k] for k in curr.keys() - prev.keys()][:30], "removed_edges": [prev[k] for k in prev.keys() - curr.keys()][:30], "changed_edges": changed[:30], "added_companies": [curr_c[k] for k in curr_c.keys() - prev_c.keys()][:30], "removed_companies": [prev_c[k] for k in prev_c.keys() - curr_c.keys()][:30]}
+
+
+def render_delta_radar(current_payload: dict | None = None):
+    st.subheader("Delta Radar｜前後版本比較")
+    snapshots = load_snapshots(12)
+    if not snapshots:
+        st.info("目前還沒有 snapshot。請先搜尋一次。")
+        return
+    if current_payload is None:
+        current_payload = snapshots[0]; previous = snapshots[1] if len(snapshots) > 1 else {}
+    else:
+        previous = snapshots[0] if snapshots else {}
+    st.markdown(f"**目前快照：** {current_payload.get('created_at','')}")
+    if not previous:
+        st.info("只有一份 snapshot，暫時無法比較前後差異。")
+        return
+    st.markdown(f"**比較基準：** {previous.get('created_at','')}")
+    delta = compare_snapshots(current_payload, previous)
+    c1, c2, c3 = st.columns(3); c1.metric("新增關係", len(delta["added_edges"])); c2.metric("狀態變化", len(delta["changed_edges"])); c3.metric("消失 / 降溫關係", len(delta["removed_edges"]))
+    with st.expander("新增公司節點", expanded=False): st.dataframe(pd.DataFrame(delta["added_companies"]), use_container_width=True)
+    with st.expander("新增關係", expanded=True): st.dataframe(pd.DataFrame(delta["added_edges"]), use_container_width=True)
+    with st.expander("關係狀態變化", expanded=True):
+        if delta["changed_edges"]:
+            rows = [{"key": x["key"], "before_status": x["before"].get("supply_chain_status"), "after_status": x["after"].get("supply_chain_status"), "before_trend": x["before"].get("trend_signal"), "after_trend": x["after"].get("trend_signal"), "evidence": x["after"].get("evidence")} for x in delta["changed_edges"]]
+            st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        else: st.info("沒有偵測到狀態變化。")
+    with st.expander("消失 / 降溫關係", expanded=False): st.dataframe(pd.DataFrame(delta["removed_edges"]), use_container_width=True)
+    with st.expander("Snapshot 管理"):
+        st.write(f"目前本機 snapshot 數：{len(snapshots)}")
+        if st.button("清空本機 snapshots"):
+            for p in SNAPSHOT_DIR.glob("snapshot_*.json"):
+                try: p.unlink()
+                except Exception: pass
+            st.success("已清空。請重新整理畫面。")
+
+
+def render_master_candidate_queue():
+    st.subheader("主檔候選增補")
+    st.caption("搜尋只會把新公司 / 新關係放到候選清單，不會直接污染正式 supply_chain_master.csv。確認後再手動合併。")
+    cand = load_supply_chain_candidates()
+    if cand.empty:
+        st.info("目前沒有候選資料。搜尋幾次後，如果出現主檔沒有的新公司或新關係，會自動出現在這裡。")
+        return
+    pending = cand[cand["review_status"].astype(str).str.lower().eq("pending")]
+    c1, c2, c3 = st.columns(3); c1.metric("候選總數", len(cand)); c2.metric("待審核", len(pending)); c3.metric("高頻候選", int((cand["seen_count"].astype(int) >= 2).sum()))
+    st.dataframe(cand.sort_values(["seen_count", "last_seen"], ascending=[False, False]), use_container_width=True)
+    st.download_button("下載候選清單 CSV", data=cand.to_csv(index=False).encode("utf-8-sig"), file_name="supply_chain_candidates.csv", mime="text/csv", use_container_width=True)
+    st.caption("建議：seen_count >= 2 且 confidence 不是低信心者，優先人工確認後再加入 supply_chain_master.csv。")
+    if st.button("清空候選清單"):
+        try:
+            if CANDIDATE_PATH.exists(): CANDIDATE_PATH.unlink()
+            st.success("已清空候選清單。")
+        except Exception as exc:
+            st.error(f"清空失敗：{exc}")
+
 def build_company_supply_chain_snapshot(feed: pd.DataFrame, max_news: int = 80):
     nodes_df, edges_df, summary = build_industry_relationships(feed, max_news=max_news)
     if nodes_df is None or nodes_df.empty:
@@ -1889,15 +2271,7 @@ def build_company_supply_chain_snapshot(feed: pd.DataFrame, max_news: int = 80):
             text = ' '.join([str(row.get('title', '')), str(row.get('title_zh', '')), str(row.get('summary', '')), str(row.get('category', ''))])
             comps = extract_companies_from_text(text)
             for comp in comps:
-                article_rows.append({
-                    'company': comp,
-                    'title_zh': row.get('title_zh') or row.get('title') or '',
-                    'category': row.get('category', ''),
-                    'importance': row.get('importance', ''),
-                    'freshness_label': row.get('freshness_label', ''),
-                    'text': text,
-                    'url': row.get('url', ''),
-                })
+                article_rows.append({'company': comp, 'title_zh': row.get('title_zh') or row.get('title') or '', 'category': row.get('category', ''), 'importance': row.get('importance', ''), 'freshness_label': row.get('freshness_label', ''), 'text': text, 'url': row.get('url', '')})
     article_df = pd.DataFrame(article_rows)
 
     if not article_df.empty:
@@ -1907,20 +2281,21 @@ def build_company_supply_chain_snapshot(feed: pd.DataFrame, max_news: int = 80):
         companies['top_news'] = companies['node'].map(lambda x: '｜'.join(grouped.get_group(x)['title_zh'].head(3).tolist()) if x in grouped.groups else '')
         companies['top_categories'] = companies['node'].map(lambda x: '、'.join(pd.Series(grouped.get_group(x)['category']).dropna().astype(str).value_counts().head(3).index.tolist()) if x in grouped.groups else '')
     else:
-        companies['news_hits'] = companies['count']
-        companies['status'] = '中性/觀察'
-        companies['top_news'] = ''
-        companies['top_categories'] = ''
+        companies['news_hits'] = companies['count']; companies['status'] = '中性/觀察'; companies['top_news'] = ''; companies['top_categories'] = ''
 
     if edges_df is None or edges_df.empty:
-        edges = pd.DataFrame(columns=['source','target','relation','strength','evidence'])
+        edges = pd.DataFrame(columns=['source','target','relation','strength','evidence','edge_group','confidence','supply_chain_status','trend_signal'])
     else:
-        edges = edges_df.copy()
-        edges['edge_group'] = '其他'
+        edges = edges_df.copy(); edges['edge_group'] = '其他'
         edges.loc[edges['relation'].str.contains('供應|客戶|代工|平台|雲端', na=False), 'edge_group'] = '供應鏈'
         edges.loc[edges['relation'].str.contains('競爭|替代|威脅', na=False), 'edge_group'] = '競爭'
         edges.loc[edges['relation'].str.contains('事件影響|題材', na=False), 'edge_group'] = '事件傳導'
+        edges['confidence'] = edges.apply(infer_relation_confidence, axis=1)
+        edges['supply_chain_status'] = edges.apply(infer_supply_chain_status, axis=1)
+        edges['trend_signal'] = edges.apply(infer_relationship_trend, axis=1)
+        edges['master_status'] = ''; edges['master_confidence'] = ''; edges['change_reason'] = ''; edges['evidence_url'] = ''
 
+    companies, edges = overlay_master_supply_chain(companies, edges, load_supply_chain_master())
     return companies.sort_values(['news_hits', 'count', 'node'], ascending=[False, False, True]), edges, summary
 
 
@@ -2042,7 +2417,7 @@ def render_supply_chain_layered_sheet(companies_df: pd.DataFrame, edges_df: pd.D
         st.info('目前沒有明確的供應鏈連線。')
     else:
         show = edges_df[edges_df['edge_group'].isin(['供應鏈', '事件傳導', '競爭'])].copy()
-        st.dataframe(show[['source', 'target', 'edge_group', 'relation', 'strength', 'evidence']].head(80), use_container_width=True)
+        st.dataframe(show[[c for c in ['source','target','edge_group','relation','confidence','supply_chain_status','trend_signal','master_status','master_confidence','strength','evidence'] if c in show.columns]].head(80), use_container_width=True)
 
 
 def render_map_with_panel_sheet(companies_df: pd.DataFrame, edges_df: pd.DataFrame):
@@ -2106,7 +2481,7 @@ def render_map_with_panel_sheet(companies_df: pd.DataFrame, edges_df: pd.DataFra
             st.markdown('**競爭對手：** ' + ('、'.join(sorted(set(comp['source'].tolist() + comp['target'].tolist()) - {selected})) if not comp.empty else '—'))
             st.markdown('**事件 / 題材：** ' + ('、'.join(sorted(set(event['source'].tolist() + event['target'].tolist()) - {selected})) if not event.empty else '—'))
             with st.expander('相關連線明細'):
-                st.dataframe(related[['source', 'target', 'edge_group', 'relation', 'strength', 'evidence']].head(50), use_container_width=True)
+                st.dataframe(related[[c for c in ['source','target','edge_group','relation','confidence','supply_chain_status','trend_signal','master_status','master_confidence','strength','evidence'] if c in related.columns]].head(50), use_container_width=True)
 def extract_companies_from_text(text: str) -> list:
     t = (text or "").lower()
     found, seen = [], set()
@@ -2272,7 +2647,7 @@ def build_graph(feed: pd.DataFrame) -> str:
 # UI
 # -------------------------------
 
-st.set_page_config(page_title="Global News Radar V30", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Global News Radar V33", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -2341,7 +2716,7 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V30：投資情報雷達穩定版")
+st.title("🌍 Global News Radar V33：主檔候選增補 + Delta")
 
 with st.sidebar:
     st.header("搜尋")
@@ -2435,6 +2810,12 @@ with st.sidebar:
     show_news_on_map = st.checkbox("地圖顯示公司/財經新聞", value=True)
     show_events_on_map = st.checkbox("地圖顯示全球事件", value=True)
 
+    st.divider()
+    st.subheader("記錄與遺忘")
+    enable_snapshot = st.checkbox("每次搜尋記錄精簡 snapshot", value=True)
+    snapshot_max_files = st.slider("最多保留幾份 snapshot", 5, 80, 30, step=5)
+    snapshot_max_days = st.slider("最多保留幾天", 1, 60, 14)
+
     search_button = st.button("更新統合新聞流", type="primary", key="update_feed")
 
 # Init session
@@ -2446,6 +2827,10 @@ if "last_success_query" not in st.session_state:
     st.session_state["last_success_query"] = ""
 if "last_query_plan" not in st.session_state:
     st.session_state["last_query_plan"] = {}
+if "last_snapshot_payload" not in st.session_state:
+    st.session_state["last_snapshot_payload"] = None
+if "last_snapshot_path" not in st.session_state:
+    st.session_state["last_snapshot_path"] = ""
 
 # Load GDELT events separately. Even if news fails, events can still work.
 events_all = pd.DataFrame()
@@ -2498,6 +2883,17 @@ if not feed.empty:
 else:
     feed = st.session_state["last_feed"]
 
+if search_button and enable_snapshot and not feed.empty:
+    try:
+        snap_companies, snap_edges, _ = build_company_supply_chain_snapshot(feed, max_news=80)
+        payload = minimal_snapshot_payload(feed, snap_companies, snap_edges, query, time_range, freshness_mode)
+        st.session_state["last_snapshot_payload"] = payload
+        st.session_state["last_snapshot_path"] = save_snapshot(payload, max_files=snapshot_max_files, max_days=snapshot_max_days)
+        new_candidates = build_master_candidate_rows(snap_companies, snap_edges, load_supply_chain_master())
+        merge_candidates(new_candidates)
+    except Exception as exc:
+        st.info(f"snapshot / 候選記錄失敗：{exc}")
+
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("統合新聞流", f"{len(feed):,}")
 col2.metric("公司/財經新聞", f"{len(articles):,}")
@@ -2518,11 +2914,11 @@ if plan:
         if plan.get("tickers"):
             st.markdown("**相關 ticker：** " + ", ".join(plan.get("tickers", [])))
 
-tab_feed, tab_map, tab_graph, tab_raw = st.tabs(["統合新聞流", "統合地圖", "產業關係圖", "原始資料"])
+tab_feed, tab_map, tab_graph, tab_delta, tab_candidates, tab_raw = st.tabs(["統合新聞流", "統合地圖", "產業關係圖", "Delta Radar", "主檔候選", "原始資料"])
 
 with tab_feed:
     st.subheader("統合新聞流")
-    st.caption("V29：新增事件新鮮度判斷；排序優先看真新事件，再看熱度、重要性與來源品質。")
+    st.caption("V33：搜尋結果會產生主檔候選清單；先審核再合併，避免垃圾新聞污染供應鏈資料庫。")
 
     if not feed.empty:
         st.markdown("### 複製新聞包")
@@ -2622,7 +3018,7 @@ with tab_feed:
 
 with tab_map:
     st.subheader("統合地圖 / 供應鏈視圖")
-    st.caption("V30：把你剛剛要的三個方案都先做成不同 sheet（tab），你可以直接比較感覺，再決定保留哪一個。")
+    st.caption("V33：供應鏈主檔作為背景骨架；搜尋發現的新公司/新關係會先進入候選清單，不直接污染主檔。")
 
     map_sheet_a, map_sheet_b, map_sheet_c, map_sheet_old = st.tabs([
         "方案 A｜供應鏈地理圖",
@@ -2660,6 +3056,12 @@ with tab_map:
 
 with tab_graph:
     render_industry_relationship_page(feed)
+
+with tab_delta:
+    render_delta_radar(st.session_state.get("last_snapshot_payload"))
+
+with tab_candidates:
+    render_master_candidate_queue()
 
 with tab_raw:
     st.subheader("原始資料")
