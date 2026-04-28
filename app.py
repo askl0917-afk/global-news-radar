@@ -22,7 +22,7 @@ from streamlit_folium import st_folium
 
 
 # ============================================================
-# Global News Radar V25
+# Global News Radar V27
 # 投資情報雷達穩定版
 #
 # What changed:
@@ -822,103 +822,122 @@ def apply_heat_ranking(df: pd.DataFrame) -> pd.DataFrame:
 
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def groq_summarize_events(feed_records: list, user_query: str = "", time_range: str = "", summary_model: str = "heavy") -> str:
-    """Use Groq to summarize top news headlines into analyst-style implications."""
-    if not feed_records:
-        return ""
+def make_download_filename(prefix: str, ext: str) -> str:
+    ts = pd.Timestamp.now(tz="Asia/Taipei").strftime("%Y%m%d_%H%M")
+    return f"{prefix}_{ts}.{ext}"
 
-    api_key = get_groq_api_key()
-    if not api_key:
-        return "Groq API 尚未啟用，因此無法產生 AI 事件總結。"
 
+def clean_for_markdown(value) -> str:
+    text = "" if value is None else str(value)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def build_news_bundle_markdown(feed: pd.DataFrame, ai_summary: str = "", query: str = "", time_range: str = "", plan: dict | None = None) -> str:
+    """Create a Markdown research bundle that can be uploaded back to ChatGPT."""
     lines = []
-    for i, r in enumerate(feed_records[:18], 1):
-        title_zh = clean_text(r.get("title_zh", ""))
-        title = clean_text(r.get("title", ""))
-        domain = clean_text(r.get("domain", ""))
-        category = clean_text(r.get("category", ""))
-        importance = clean_text(r.get("importance", ""))
-        heat = clean_text(str(r.get("heat_score", "")))
-        time_utc = clean_text(str(r.get("time_utc", "")))
-        lines.append(
-            f"{i}. {title_zh or title}\n"
-            f"   原文：{title}\n"
-            f"   來源：{domain}｜類別：{category}｜重要性：{importance}｜熱度：{heat}｜時間：{time_utc}"
-        )
+    now = pd.Timestamp.now(tz="Asia/Taipei").strftime("%Y-%m-%d %H:%M:%S %Z")
 
-    system_prompt = """
-你是台灣資深科技產業與股票分析師。
-請閱讀一批新聞標題，產生繁體中文「事件總結」。
-目標：讓使用者快速知道這些事件代表什麼、可能影響誰、接下來要追什麼。
-風格：先結論、再分點；不要空泛；不要誇大；明確區分事實與推論；適合手機閱讀。
+    lines.append("# Global News Radar 新聞包")
+    lines.append("")
+    lines.append(f"- 匯出時間：{now}")
+    lines.append(f"- 查詢問題：{clean_for_markdown(query)}")
+    lines.append(f"- 時間範圍：{clean_for_markdown(time_range)}")
+    lines.append(f"- 新聞筆數：{0 if feed is None else len(feed)}")
+    lines.append("")
 
-請用以下格式輸出：
+    if plan:
+        lines.append("## AI 搜尋策略")
+        lines.append("")
+        lines.append(f"- 核心主題：{clean_for_markdown(plan.get('core_topic_zh', ''))}")
+        lines.append(f"- 拆解理由：{clean_for_markdown(plan.get('reason', ''))}")
+        queries = plan.get("search_queries", []) or []
+        if queries:
+            lines.append("- 實際搜尋式：")
+            for q in queries:
+                lines.append(f"  - {clean_for_markdown(q)}")
+        tickers = plan.get("tickers", []) or []
+        if tickers:
+            lines.append(f"- 相關 ticker：{', '.join([clean_for_markdown(t) for t in tickers])}")
+        lines.append("")
 
-### 總結判斷
-2～3 句話說明這批新聞代表什麼。
+    if ai_summary:
+        lines.append("## App 內 AI 事件總結")
+        lines.append("")
+        lines.append(str(ai_summary).strip())
+        lines.append("")
 
-### 主要事件
-- ...
-- ...
-- ...
+    lines.append("## 全部新聞")
+    lines.append("")
 
-### 可能影響
-- 對產業：...
-- 對主要公司：...
-- 對供應鏈：...
-- 對股價敘事：...
-
-### 需要追蹤
-- ...
-- ...
-""".strip()
-
-    user_prompt = f"""
-使用者查詢：{user_query}
-時間範圍：{time_range}
-
-新聞清單：
-{chr(10).join(lines)}
-""".strip()
-
-    try:
-        client = Groq(api_key=api_key)
-        completion = client.chat.completions.create(
-            model=(get_groq_model_heavy() if summary_model == "heavy" else get_groq_model_light()),
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.15,
-            max_tokens=(760 if summary_model == "heavy" else 520),
-        )
-        return completion.choices[0].message.content.strip()
-    except Exception as exc:
-        return f"Groq 事件總結暫時失敗：{exc}"
-
-
-def build_summary_records(feed: pd.DataFrame, max_items: int = 15) -> list:
-    """Select top rows for Groq summary."""
     if feed is None or feed.empty:
-        return []
+        lines.append("目前沒有新聞資料。")
+        return "\n".join(lines)
 
+    df = feed.copy().reset_index(drop=True)
+
+    for i, row in df.iterrows():
+        title_zh = clean_for_markdown(row.get("title_zh", ""))
+        title = clean_for_markdown(row.get("title", ""))
+        url = clean_for_markdown(row.get("url", ""))
+        domain = clean_for_markdown(row.get("domain", ""))
+        time_utc = clean_for_markdown(row.get("time_utc", ""))
+        data_type = clean_for_markdown(row.get("data_type", ""))
+        category = clean_for_markdown(row.get("category", ""))
+        importance = clean_for_markdown(row.get("importance", ""))
+        quality = clean_for_markdown(row.get("source_quality", ""))
+        heat_score = clean_for_markdown(row.get("heat_score", ""))
+        location = clean_for_markdown(row.get("location_name", row.get("source_country", "")))
+        translation_engine = clean_for_markdown(row.get("translation_engine", ""))
+
+        display_title = title_zh or title or "(無標題)"
+        lines.append(f"### {i + 1}. {display_title}")
+        lines.append("")
+        if title and title != title_zh:
+            lines.append(f"- 原文標題：{title}")
+        lines.append(f"- 時間 UTC：{time_utc}")
+        lines.append(f"- 來源：{domain}")
+        lines.append(f"- 地點 / 國家：{location}")
+        lines.append(f"- 類型：{data_type}")
+        lines.append(f"- 類別：{category}")
+        lines.append(f"- 重要性：{importance}")
+        lines.append(f"- 來源品質：{quality}")
+        lines.append(f"- 熱度分數：{heat_score}")
+        if translation_engine:
+            lines.append(f"- 翻譯來源：{translation_engine}")
+        if url:
+            lines.append(f"- 連結：{url}")
+        lines.append("")
+
+    lines.append("---")
+    lines.append("")
+    lines.append("## 給 ChatGPT 的建議提示詞")
+    lines.append("")
+    lines.append("請閱讀這份 Global News Radar 新聞包，幫我整理：")
+    lines.append("1. 這批事件代表什麼？")
+    lines.append("2. 對 AI / 半導體 / 科技股的可能影響是什麼？")
+    lines.append("3. 哪些是事實、哪些只是市場敘事？")
+    lines.append("4. 哪些公司或供應鏈最值得追蹤？")
+    lines.append("5. 幫我用分析師口吻產出結論、影響矩陣與後續追蹤清單。")
+
+    return "\n".join(lines)
+
+
+def build_news_bundle_csv(feed: pd.DataFrame) -> bytes:
+    """CSV export for spreadsheet review."""
+    if feed is None or feed.empty:
+        return "no,data\n".encode("utf-8-sig")
+
+    keep_cols = [
+        "time_utc", "title_zh", "title", "url", "domain", "source_country",
+        "location_name", "data_type", "category", "importance", "source_quality",
+        "heat_score", "translation_engine", "language"
+    ]
     df = feed.copy()
-    if "heat_score" not in df.columns:
-        df["heat_score"] = 0
-
-    if "data_type" in df.columns:
-        df["_type_boost"] = df["data_type"].astype(str).apply(lambda x: 1 if ("公司" in x or "財經" in x) else 0)
-    else:
-        df["_type_boost"] = 0
-
-    importance_order = {"A": 0, "B": 1, "C": 2, "D": 3}
-    df["_i"] = df.get("importance", pd.Series(["D"] * len(df))).map(importance_order).fillna(9)
-    df["time_utc"] = pd.to_datetime(df["time_utc"], errors="coerce", utc=True)
-
-    df = df.sort_values(["_type_boost", "heat_score", "_i", "time_utc"], ascending=[False, False, True, False])
-    cols = ["title_zh", "title", "domain", "category", "importance", "heat_score", "time_utc", "source_quality"]
-    return df[[c for c in cols if c in df.columns]].head(max_items).to_dict("records")
+    cols = [c for c in keep_cols if c in df.columns]
+    if cols:
+        df = df[cols]
+    return df.to_csv(index=False).encode("utf-8-sig")
 
 
 
@@ -1672,7 +1691,7 @@ def build_graph(feed: pd.DataFrame) -> str:
 # UI
 # -------------------------------
 
-st.set_page_config(page_title="Global News Radar V25", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Global News Radar V27", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -1741,7 +1760,7 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V25：投資情報雷達穩定版")
+st.title("🌍 Global News Radar V27：投資情報雷達穩定版")
 
 with st.sidebar:
     st.header("搜尋")
@@ -1783,21 +1802,14 @@ with st.sidebar:
         help="省 token：多用 8B、少翻譯；平衡：Top 少數用 70B；高品質：更多 Top 新聞用 70B。"
     )
     if groq_usage_mode == "省 token":
-        default_translate_n, default_heavy_n, default_summary_n, default_summary_model = 5, 0, 5, "light"
+        default_translate_n, default_heavy_n = 5, 0
     elif groq_usage_mode == "高品質":
-        default_translate_n, default_heavy_n, default_summary_n, default_summary_model = 20, 8, 12, "heavy"
+        default_translate_n, default_heavy_n = 20, 8
     else:
-        default_translate_n, default_heavy_n, default_summary_n, default_summary_model = 10, 3, 8, "heavy"
+        default_translate_n, default_heavy_n = 10, 3
 
     groq_translate_top_n = st.slider("Groq / 機翻標題翻譯前幾則", 0, 30, default_translate_n, step=5)
     heavy_translate_top_n = st.slider("其中用 Heavy 精翻前幾則", 0, 10, min(default_heavy_n, groq_translate_top_n), step=1)
-    summary_model = st.radio(
-        "事件總結模型",
-        ["light", "heavy"],
-        index=0 if default_summary_model == "light" else 1,
-        horizontal=True,
-        help="light 省 token；heavy 較適合產業影響判斷。"
-    )
 
     with st.expander("測試 Groq 翻譯"):
         test_title = st.text_input(
@@ -1836,11 +1848,6 @@ with st.sidebar:
     show_news_on_map = st.checkbox("地圖顯示公司/財經新聞", value=True)
     show_events_on_map = st.checkbox("地圖顯示全球事件", value=True)
 
-    st.divider()
-    st.subheader("AI 事件總結")
-    enable_ai_summary = st.checkbox("搜尋後產生 Groq 事件總結", value=True)
-    summary_items = st.slider("總結讀取前幾則新聞", 5, 20, default_summary_n, step=1)
-
     search_button = st.button("更新統合新聞流", type="primary", key="update_feed")
 
 # Init session
@@ -1852,8 +1859,6 @@ if "last_success_query" not in st.session_state:
     st.session_state["last_success_query"] = ""
 if "last_query_plan" not in st.session_state:
     st.session_state["last_query_plan"] = {}
-if "last_ai_summary" not in st.session_state:
-    st.session_state["last_ai_summary"] = ""
 
 # Load GDELT events separately. Even if news fails, events can still work.
 events_all = pd.DataFrame()
@@ -1905,17 +1910,6 @@ if not feed.empty:
 else:
     feed = st.session_state["last_feed"]
 
-# Generate AI summary after a fresh search.
-if search_button and enable_ai_summary:
-    with st.spinner("Groq 正在閱讀新聞並產生事件總結..."):
-        records_for_summary = build_summary_records(feed, max_items=summary_items)
-        st.session_state["last_ai_summary"] = groq_summarize_events(
-            records_for_summary,
-            user_query=query,
-            time_range=time_range,
-            summary_model=summary_model,
-        )
-
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("統合新聞流", f"{len(feed):,}")
 col2.metric("公司/財經新聞", f"{len(articles):,}")
@@ -1940,11 +1934,37 @@ tab_feed, tab_map, tab_graph, tab_raw = st.tabs(["統合新聞流", "統合地�
 
 with tab_feed:
     st.subheader("統合新聞流")
-    st.caption("V25：雙模型省 token：搜尋拆解/批量翻譯用 Light，總結/精翻才用 Heavy。")
+    st.caption("V27：移除 App 端 Groq 長總結；保留新聞包下載，讓你丟回 ChatGPT 深讀。")
 
-    if st.session_state.get("last_ai_summary"):
-        st.markdown("### AI 事件總結")
-        st.markdown(st.session_state["last_ai_summary"])
+    if not feed.empty:
+        st.markdown("### 下載新聞包")
+        st.caption("下載不會消耗 Groq token。建議下載 Markdown 後直接丟回 ChatGPT 深讀。")
+        md_bundle = build_news_bundle_markdown(
+            feed,
+            ai_summary="",
+            query=st.session_state.get("last_success_query", ""),
+            time_range=time_range,
+            plan=st.session_state.get("last_query_plan", {}),
+        )
+        csv_bundle = build_news_bundle_csv(feed)
+
+        cdl1, cdl2 = st.columns(2)
+        with cdl1:
+            st.download_button(
+                "下載 Markdown 新聞包",
+                data=md_bundle.encode("utf-8"),
+                file_name=make_download_filename("global_news_bundle", "md"),
+                mime="text/markdown",
+                use_container_width=True,
+            )
+        with cdl2:
+            st.download_button(
+                "下載 CSV 新聞表",
+                data=csv_bundle,
+                file_name=make_download_filename("global_news_bundle", "csv"),
+                mime="text/csv",
+                use_container_width=True,
+            )
         st.divider()
 
     if feed.empty:

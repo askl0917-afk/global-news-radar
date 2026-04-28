@@ -1,28 +1,44 @@
-# Global News Radar V25
+# Global News Radar V27
 
-V25 is the token-saving dual-model version.
+V27 removes the App-side Groq event summary and keeps one-click news bundle export.
+
+## Why
+
+The App should focus on:
+- fetching news
+- ranking by heat
+- translating only top items when needed
+- building industry relationship graphs
+- exporting a clean research bundle
+
+Long-form event interpretation can be done in ChatGPT by uploading the Markdown bundle.
+This saves Groq tokens and avoids hitting daily limits.
 
 ## What changed
 
-- Adds Groq usage modes:
-  - 省 token
-  - 平衡
-  - 高品質
-- Adds dual-model settings:
-  - `GROQ_MODEL_LIGHT`
-  - `GROQ_MODEL_HEAVY`
-- Model routing:
-  - Natural-language search planning: LIGHT
-  - Bulk title translation: LIGHT
-  - Top few title refinements: HEAVY
-  - AI event summary: LIGHT or HEAVY selectable
-- Saves tokens by translating only the top N ranked articles instead of all articles.
-- Keeps:
-  - 8-hour AI / semiconductor heat radar
-  - Groq event summary
-  - industry relationship graph
-  - time range filtering
-  - heat score ranking
+Removed:
+- Groq 事件總結
+- 總結讀取前幾則新聞
+- 事件總結模型 light/heavy
+
+Kept:
+- Natural-language research search
+- 8-hour AI / semiconductor heat radar
+- Groq dual-model translation controls
+- Heat score ranking
+- Industry relationship graph
+- Markdown / CSV news bundle downloads
+
+## Recommended workflow
+
+1. Search and rank news in the App.
+2. Download Markdown 新聞包.
+3. Upload the Markdown to ChatGPT.
+4. Ask ChatGPT to produce:
+   - event summary
+   - impact matrix
+   - company / supply-chain implications
+   - follow-up tracking list
 
 ## Recommended Streamlit Secrets
 
@@ -31,25 +47,6 @@ GROQ_API_KEY = "gsk_your_key_here"
 GROQ_MODEL_LIGHT = "llama-3.1-8b-instant"
 GROQ_MODEL_HEAVY = "llama-3.3-70b-versatile"
 ```
-
-Backward compatibility:
-
-```toml
-GROQ_MODEL = "llama-3.3-70b-versatile"
-```
-
-still works as the heavy model, but the two-model setup is recommended.
-
-## Suggested usage
-
-- Daily scanning:
-  - Groq 使用模式：省 token or 平衡
-  - 事件總結模型：light or heavy
-  - 總結讀取：5～8
-- Deeper research:
-  - Groq 使用模式：高品質
-  - 事件總結模型：heavy
-  - 總結讀取：10～12
 
 ## Deploy
 
