@@ -1,0 +1,20 @@
+﻿source_company,target_company,relation_type,source_layer,target_layer,confidence,status,trend,share_change,change_reason,evidence,evidence_url,valid_from,valid_to,last_checked
+TSMC,Nvidia,foundry,上游製造 / 代工,中游晶片 / AI 平台,confirmed,active,stable,,既有先進製程/AI晶片供應鏈背景,seed baseline,,2024-01-01,,2026-04-28
+TSMC,AMD,foundry,上游製造 / 代工,中游晶片 / CPU/GPU,confirmed,active,stable,,既有先進製程供應鏈背景,seed baseline,,2024-01-01,,2026-04-28
+SK hynix,Nvidia,HBM memory,上游記憶體 / HBM,中游晶片 / AI 平台,confirmed,active,stable,,HBM供應鏈背景,seed baseline,,2024-01-01,,2026-04-28
+Micron,Nvidia,HBM memory,上游記憶體 / HBM,中游晶片 / AI 平台,likely,active,stable,,HBM供應鏈背景,seed baseline,,2024-01-01,,2026-04-28
+Samsung,Nvidia,HBM / manufacturing,上游製造 / 記憶體,中游晶片 / AI 平台,likely,active,stable,,HBM/製造供應鏈背景,seed baseline,,2024-01-01,,2026-04-28
+ASE,Nvidia,OSAT / packaging,封裝測試 / OSAT,中游晶片 / AI 平台,likely,active,stable,,封裝測試供應鏈背景,seed baseline,,2024-01-01,,2026-04-28
+Unimicron,Nvidia,ABF substrate,ABF / 載板,中游晶片 / AI 平台,likely,active,stable,,ABF載板供應鏈背景,seed baseline,,2024-01-01,,2026-04-28
+Quanta,Microsoft,AI server ODM,平台 / 伺服器 ODM,下游雲端 / CSP,likely,active,stable,,AI伺服器ODM供應鏈背景,seed baseline,,2024-01-01,,2026-04-28
+Wiwynn,Microsoft,AI server ODM,平台 / 伺服器 ODM,下游雲端 / CSP,likely,active,stable,,AI伺服器ODM供應鏈背景,seed baseline,,2024-01-01,,2026-04-28
+Wiwynn,Meta,AI server ODM,平台 / 伺服器 ODM,下游雲端 / CSP,likely,active,stable,,AI伺服器ODM供應鏈背景,seed baseline,,2024-01-01,,2026-04-28
+Foxconn,Nvidia,AI server / manufacturing,平台 / 伺服器 ODM,中游晶片 / AI 平台,likely,active,stable,,AI伺服器/製造鏈背景,seed baseline,,2024-01-01,,2026-04-28
+Delta Electronics,Quanta,power / thermal,電源 / 散熱,平台 / 伺服器 ODM,likely,active,stable,,AI伺服器電源/散熱供應鏈背景,seed baseline,,2024-01-01,,2026-04-28
+Accton,Microsoft,networking switch,網通 / 交換器,下游雲端 / CSP,likely,active,stable,,雲端網通供應鏈背景,seed baseline,,2024-01-01,,2026-04-28
+Intel,AMD,competitor,中游晶片 / CPU,中游晶片 / CPU/GPU,confirmed,active,stable,,x86 CPU競爭背景,seed baseline,,2024-01-01,,2026-04-28
+Nvidia,AMD,competitor,中游晶片 / AI 平台,中游晶片 / CPU/GPU,confirmed,active,stable,,AI加速器/平台競爭背景,seed baseline,,2024-01-01,,2026-04-28
+Nvidia,Intel,competitor / platform overlap,中游晶片 / AI 平台,中游晶片 / CPU,likely,active,stable,,AI平台/CPU敘事競爭背景,seed baseline,,2024-01-01,,2026-04-28
+Arm,Qualcomm,IP architecture,上游 IP / 架構,中游晶片 / AI PC,confirmed,active,stable,,Arm IP/架構背景,seed baseline,,2024-01-01,,2026-04-28
+GUC,TSMC,ASIC design service,ASIC 設計服務,上游製造 / 代工,likely,active,stable,,ASIC設計服務/代工生態背景,seed baseline,,2024-01-01,,2026-04-28
+Alchip,TSMC,ASIC design service,ASIC 設計服務,上游製造 / 代工,likely,active,stable,,ASIC設計服務/代工生態背景,seed baseline,,2024-01-01,,2026-04-28

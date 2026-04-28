@@ -79,3 +79,43 @@ Recommended Python version:
 ```text
 3.12
 ```
+
+
+# V31 notes
+
+- Adds supply-chain relationship confidence labels:
+  - 高｜新聞有明確關係線索
+  - 中｜新聞共現 / 題材關聯
+  - 低｜產業字典背景
+- Adds supply-chain status labels:
+  - 新加入 / 擴大合作候選
+  - 退出 / 中斷風險
+  - 既有關係背景
+  - 待確認
+- Map labels are changed to high-contrast dark text on white background with border and shadow.
+- Low-confidence dictionary-only links are shown as dashed, lower-opacity lines.
+
+
+# V32 notes
+
+- Adds `supply_chain_master.csv` as a lightweight seed supply-chain database.
+- Adds local `.radar_snapshots` records for each search.
+- Snapshot storage is lightweight and stores only titles, URLs, company nodes, relationships, heat/freshness, not full article bodies.
+- Adds Delta Radar tab to compare current search with previous snapshot.
+- Adds forgetting controls:
+  - max number of snapshots
+  - max days to retain
+  - manual clear snapshots
+- This is suitable for Streamlit free tier as long as it stays lightweight.
+
+
+# V33 notes
+
+- Adds candidate queue for supply-chain master growth.
+- Each search can add:
+  - new_company candidates
+  - new_relation candidates
+- The official `supply_chain_master.csv` is NOT automatically modified.
+- Candidate queue is stored locally in `.radar_candidates/supply_chain_candidates.csv`.
+- User can download candidate CSV, review it, and manually merge high-quality rows into master.
+- This avoids polluting the master database with RSS junk or weak co-occurrence signals.
