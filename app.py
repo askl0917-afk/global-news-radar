@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import math
 import zipfile
 from pathlib import Path
 from datetime import datetime, timezone
@@ -23,8 +24,8 @@ from streamlit_folium import st_folium
 
 
 # ============================================================
-# Global News Radar V38
-# 開放式公司辨識 + 智慧地圖標籤
+# Global News Radar V39
+# 修正地圖錯位錯誤版
 #
 # What changed:
 # - Main financial/company news no longer depends only on GDELT DOC API.
@@ -2450,7 +2451,7 @@ def add_display_offsets(companies_df: pd.DataFrame) -> pd.DataFrame:
         # Larger offset for large clusters, still visually close to real HQ area.
         radius = 0.16 if n >= 6 else 0.10
         for k, idx in enumerate(idxs):
-            angle = 2 * math.pi * k / n
+            angle = 2 * math.pi * k / max(n, 1)
             lat = float(out.at[idx, "lat"])
             lon = float(out.at[idx, "lon"])
             out.at[idx, "display_lat"] = lat + radius * math.sin(angle)
@@ -2998,7 +2999,7 @@ def build_graph(feed: pd.DataFrame) -> str:
 # UI
 # -------------------------------
 
-st.set_page_config(page_title="Global News Radar V38", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Global News Radar V39", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -3067,7 +3068,7 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V38：開放式公司辨識 + 智慧地圖標籤")
+st.title("🌍 Global News Radar V39：修正地圖錯位錯誤版")
 
 with st.sidebar:
     st.header("搜尋")
@@ -3362,7 +3363,7 @@ def run_realtime_supply_chain_verification(candidates: pd.DataFrame, max_results
 
 def render_realtime_verification_tab(feed: pd.DataFrame, time_range: str):
     st.subheader("即時供應鏈驗證")
-    st.caption("V38：搜尋完成後會自動背景驗證 Top 關係；這頁只是讓你查看結果或手動重跑。")
+    st.caption("V39：搜尋完成後會自動背景驗證 Top 關係；這頁只是讓你查看結果或手動重跑。")
     if feed is None or feed.empty:
         st.info("目前沒有新聞資料。請先搜尋一次。")
         return
@@ -3407,7 +3408,7 @@ tab_feed, tab_map, tab_graph, tab_verify, tab_delta, tab_candidates, tab_raw = s
 
 with tab_feed:
     st.subheader("統合新聞流")
-    st.caption("V38：搜尋後會自動背景驗證供應鏈關係，並直接反映到方案 A/B/C。")
+    st.caption("V39：搜尋後會自動背景驗證供應鏈關係，並直接反映到方案 A/B/C。")
 
     if not feed.empty:
         st.markdown("### 複製新聞包")
@@ -3507,7 +3508,7 @@ with tab_feed:
 
 with tab_map:
     st.subheader("統合地圖 / 供應鏈視圖")
-    st.caption("V38：公司辨識不再只靠主檔；OpenAI 等模型公司會進入供應鏈視圖。地圖標籤改成錯位、截斷與可點擊資訊卡。")
+    st.caption("V39：公司辨識不再只靠主檔；OpenAI 等模型公司會進入供應鏈視圖。地圖標籤改成錯位、截斷與可點擊資訊卡。")
 
     map_sheet_a, map_sheet_b, map_sheet_c, map_sheet_old = st.tabs([
         "方案 A｜供應鏈地理圖",

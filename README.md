@@ -1,15 +1,14 @@
-# Global News Radar V38
+# Global News Radar V39
 
-V38 fixes OpenAI-style model companies and map readability.
+V39 fixes the V38 runtime error.
 
-## What changed
+## Fix
 
-- Added OpenAI, Anthropic, xAI, Perplexity, Mistral AI, Cohere, DeepSeek and other AI model / application companies.
-- Company extraction is no longer only limited to `supply_chain_master.csv`; it uses aliases plus a lightweight organization-name fallback.
-- Scheme A/B/C now include OpenAI when the current news mentions it.
-- Map labels are compact, high-contrast, truncated with ellipsis, and offset when companies cluster around the same region.
-- Clicking a node now opens a useful popup with role, location, status, news count, topics and top news links.
-- Scheme C right panel also shows clickable news links.
+- Adds missing `import math`, which is required by `add_display_offsets()`.
+- Keeps V38 improvements:
+  - OpenAI and AI model companies are detected.
+  - Map labels are compact and offset.
+  - Node popups show useful company/news information.
 
 ## Upload files
 
