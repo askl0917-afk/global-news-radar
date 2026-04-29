@@ -24,8 +24,8 @@ from streamlit_folium import st_folium
 
 
 # ============================================================
-# Global News Radar V39
-# 修正地圖錯位錯誤版
+# Global News Radar V42
+# 產品結構自動發現版
 #
 # What changed:
 # - Main financial/company news no longer depends only on GDELT DOC API.
@@ -403,8 +403,432 @@ def groq_is_enabled():
     return bool(get_groq_api_key())
 
 
+
+COMPANY_FOCUS_PROFILES = [
+    {
+        "profile_id": "nan_ya_1303",
+        "canonical": "Nan Ya Plastics",
+        "display_zh": "南亞（Nan Ya Plastics, 1303.TW）",
+        "aliases": ["南亞", "南亞塑膠", "南亞塑膠工業", "Nan Ya Plastics", "Nan Ya", "1303", "1303.TW"],
+        "tickers": ["1303.TW", "2408.TW", "8046.TW"],
+        "focus_terms": [
+            "electronic materials", "CCL", "copper clad laminate", "copper foil", "glass fiber cloth",
+            "epoxy resin", "PPE resin", "PCB", "AI server", "data center switchgear",
+            "電子材料", "銅箔基板", "銅箔", "玻纖布", "環氧樹脂", "配電盤", "AI伺服器"
+        ],
+        "related_companies": [
+            "Nan Ya PCB", "Nanya Technology", "Nanya", "Elite Material", "Iteq", "Gold Circuit",
+            "Taiwan Glass", "Rockwell Automation", "Formosa Plastics", "台光電", "聯茂", "金像電",
+            "南亞電路板", "南亞科", "台玻", "洛克威爾"
+        ],
+        "segment_mix_hint": {},
+        "product_mix_hint": {},
+        "industry_buckets": [],
+        "industry_queries": [],
+        "search_queries": [
+            '"Nan Ya Plastics" revenue breakdown electronic materials CCL copper foil glass fabric',
+            '"Nan Ya Plastics" 1303.TW earnings electronic materials',
+            '"Nan Ya Plastics" CCL copper foil glass fiber AI server',
+            '"Nan Ya Plastics" Rockwell Automation smart switchgear data center',
+            '"Nan Ya PCB" 8046 AI server PCB ABF',
+            '"Nanya Technology" 2408 DRAM DDR4 DDR5 "Nan Ya Plastics"',
+            '南亞 1303 營收比重 電子材料 銅箔基板 玻纖布',
+            '南亞 Rockwell 洛克威爾 智慧配電盤 AI 資料中心',
+        ],
+        "exclude_terms": ["consumer GPU", "gaming GPU", "ARC gaming", "baseball bat", "sitemap"],
+    },
+    {
+        "profile_id": "openai",
+        "canonical": "OpenAI",
+        "display_zh": "OpenAI",
+        "aliases": ["OpenAI", "ChatGPT", "Sam Altman"],
+        "tickers": ["MSFT", "NVDA", "ORCL", "AMD", "AVGO"],
+        "focus_terms": ["AI infrastructure", "cloud compute", "GPU", "ASIC", "data center", "capex", "revenue", "tokens"],
+        "related_companies": ["Microsoft", "Nvidia", "Oracle", "AMD", "Broadcom", "TSMC", "SoftBank", "CoreWeave"],
+        "search_queries": [
+            'OpenAI revenue cloud compute Nvidia Oracle Microsoft data center',
+            'OpenAI AI infrastructure capex GPU ASIC Broadcom TSMC',
+            'OpenAI Microsoft Oracle Nvidia partnership compute capacity',
+            'OpenAI tokens revenue profitability data center bonds',
+        ],
+        "exclude_terms": ["tutorial", "prompt", "how to use ChatGPT"],
+    },
+]
+
+
+def detect_company_focus_profile(user_query: str) -> dict | None:
+    q = str(user_query or "").lower()
+    for p in COMPANY_FOCUS_PROFILES:
+        for alias in p.get("aliases", []):
+            a = str(alias).lower()
+            if not a:
+                continue
+            if a.isascii():
+                if re.search(r"\b" + re.escape(a) + r"\b", q):
+                    return p
+            elif a in q:
+                return p
+    return None
+
+
+def build_company_centric_search_plan(user_query: str, time_range: str = "最近 24 小時", force: bool = False, search_orientation: str = "自動判斷") -> dict | None:
+    profile = detect_company_focus_profile(user_query)
+    if not profile and not force:
+        return None
+    if not profile:
+        return None
+
+    # V42: no hardcoded product assumptions. Use Company Bootstrap when possible.
+    if search_orientation in ["自動判斷", "公司本體優先", "產業主題掃描"]:
+        boot_plan = build_company_bootstrap_plan(user_query, time_range=time_range, search_orientation=search_orientation)
+        if boot_plan:
+            return boot_plan
+
+    # Minimal fallback: generic discovery queries only.
+    company_name = profile.get("canonical", "")
+    aliases = profile.get("aliases", [])
+    search_queries = generic_company_discovery_queries(company_name, aliases)
+    return {
+        "mode": "company_generic_discovery",
+        "focus_strategy": "company_product_discovery",
+        "profile_id": profile.get("profile_id", ""),
+        "core_topic_zh": profile.get("display_zh", profile.get("canonical", "")),
+        "core_entities": [company_name] + aliases[:8],
+        "focus_aliases": aliases,
+        "related_companies": profile.get("related_companies", []),
+        "focus_terms": [],
+        "company_structure": {},
+        "bootstrap_sources": [],
+        "search_queries": search_queries,
+        "tickers": profile.get("tickers", [])[:10],
+        "include_terms": [],
+        "exclude_terms": profile.get("exclude_terms", []),
+        "reason": "偵測到特定公司；先用通用查詢找產品/營收結構，避免預設產品線。",
+    }
+
+def score_company_focus(row, plan: dict | None) -> int:
+    if not plan:
+        return 0
+    text = " ".join([
+        str(row.get("title", "")),
+        str(row.get("title_zh", "")),
+        str(row.get("source_query", "")),
+        str(row.get("domain", "")),
+    ]).lower()
+
+    score = 0
+    for a in plan.get("focus_aliases", []) + plan.get("core_entities", []):
+        a = str(a or "").lower()
+        if a and a in text:
+            score += 12
+    for c in plan.get("related_companies", []):
+        c = str(c or "").lower()
+        if c and c in text:
+            score += 6
+    for t in plan.get("focus_terms", []):
+        t = str(t or "").lower()
+        if t and t in text:
+            score += 3
+    for x in plan.get("exclude_terms", []):
+        x = str(x or "").lower()
+        if x and x in text:
+            score -= 20
+    return score
+
+
+def apply_company_focus_filter_and_rank(df: pd.DataFrame, plan: dict | None) -> pd.DataFrame:
+    if df is None or df.empty or not plan:
+        return df
+    if plan.get("focus_strategy") != "company_centric":
+        return df
+
+    out = df.copy()
+    out["company_focus_score"] = out.apply(lambda r: score_company_focus(r, plan), axis=1)
+
+    # If enough direct company-related news exists, suppress broad macro-only AI background.
+    direct = out[out["company_focus_score"] > 0].copy()
+    if len(direct) >= 5:
+        out = direct
+
+    sort_cols = ["company_focus_score"]
+    ascending = [False]
+    if "freshness_score" in out.columns:
+        sort_cols.append("freshness_score"); ascending.append(False)
+    if "heat_score" in out.columns:
+        sort_cols.append("heat_score"); ascending.append(False)
+    if "time_utc" in out.columns:
+        sort_cols.append("time_utc"); ascending.append(False)
+
+    return out.sort_values(sort_cols, ascending=ascending)
+
+
+
+def generic_company_discovery_queries(company_name: str, aliases: list[str] | None = None) -> list[str]:
+    """Generic first-pass queries for product/revenue structure discovery.
+
+    No product line is pre-assumed here. The goal is to find official/public materials
+    that reveal segments, product mix, revenue mix, filings, IR decks, annual reports.
+    """
+    aliases = aliases or []
+    names = []
+    for x in [company_name] + aliases:
+        x = clean_text(str(x or ""))
+        if x and x not in names:
+            names.append(x)
+
+    primary = names[0] if names else company_name
+    zh_alias = next((x for x in names if any("\u4e00" <= ch <= "\u9fff" for ch in x)), primary)
+    en_alias = next((x for x in names if x.isascii()), primary)
+
+    queries = [
+        f'"{en_alias}" annual report revenue breakdown business segments',
+        f'"{en_alias}" investor presentation revenue mix product mix',
+        f'"{en_alias}" major products business segment revenue',
+        f'"{en_alias}" earnings presentation segments products',
+        f'{zh_alias} 營收比重 產品別營收 事業部',
+        f'{zh_alias} 年報 主要產品 營收比重',
+        f'{zh_alias} 法說 產品組合 營運比重',
+        f'{zh_alias} 財報 產品線 事業群',
+    ]
+    # Deduplicate while preserving order.
+    out = []
+    for q in queries:
+        if q not in out:
+            out.append(q)
+    return out[:8]
+
+
+def fetch_company_bootstrap_sources(company_name: str, aliases: list[str] | None = None, time_range: str = "不限時間", max_items: int = 28) -> pd.DataFrame:
+    queries = generic_company_discovery_queries(company_name, aliases)
+    frames = []
+    # Prefer official / exchange / IR style sources when possible.
+    preferred = [
+        "mops.twse.com.tw",
+        "twse.com.tw",
+        "moneydj.com",
+        "cnyes.com",
+        "nan-ya-plastics.com",
+        "nanya.com",
+        "annualreports.com",
+    ]
+    per_query = max(3, int(max_items / max(1, len(queries))))
+    for q in queries:
+        try:
+            frames.append(fetch_google_news_rss(q, max_items=per_query, preferred_domains=preferred[:3], time_range=time_range))
+        except Exception:
+            pass
+    if not frames:
+        return pd.DataFrame()
+    df = pd.concat(frames, ignore_index=True)
+    if df.empty:
+        return df
+    if "url" in df.columns:
+        df = df.drop_duplicates(subset=["url"])
+    elif "title" in df.columns:
+        df = df.drop_duplicates(subset=["title"])
+    # Rank official / company / segment keywords first.
+    def bscore(row):
+        text = " ".join([str(row.get("title", "")), str(row.get("domain", "")), str(row.get("source_query", ""))]).lower()
+        score = 0
+        for k in ["annual report", "investor", "presentation", "revenue", "segment", "product", "年報", "法說", "營收", "產品", "事業"]:
+            if k in text:
+                score += 2
+        for d in ["mops", "twse", "ir", "annualreports", "nan-ya"]:
+            if d in text:
+                score += 4
+        return score
+    df["bootstrap_score"] = df.apply(bscore, axis=1)
+    return df.sort_values(["bootstrap_score", "time_utc"], ascending=[False, False]).head(max_items)
+
+
+def groq_extract_company_structure(company_name: str, sources_df: pd.DataFrame, user_query: str = "") -> dict:
+    """Ask Groq to extract product/segment structure only from provided search evidence.
+
+    If Groq is unavailable, return a rule-based low-confidence structure.
+    """
+    if sources_df is None or sources_df.empty:
+        return {
+            "company": company_name,
+            "confidence": "低",
+            "segments": [],
+            "products": [],
+            "market_focus": [],
+            "industry_search_queries": [],
+            "missing_data": ["未取得可用的公司產品/營收結構資料"],
+            "evidence": [],
+            "method": "no_sources",
+        }
+
+    records = []
+    for _, r in sources_df.head(24).iterrows():
+        records.append({
+            "title": clean_text(r.get("title", "")),
+            "domain": clean_text(r.get("domain", "")),
+            "url": clean_text(r.get("url", "")),
+            "source_query": clean_text(r.get("source_query", "")),
+            "time_utc": str(r.get("time_utc", "")),
+        })
+
+    # Fallback if no Groq.
+    if not groq_is_enabled():
+        # Extract candidate terms from titles only; no guessed revenue shares.
+        keywords = {}
+        for rec in records:
+            text = rec["title"]
+            for token in re.findall(r"[A-Za-z][A-Za-z0-9&\\-/]{2,}|[\u4e00-\u9fff]{2,8}", text):
+                if token.lower() in ["the", "and", "for", "with", "from", "news", "stock", "market"]:
+                    continue
+                keywords[token] = keywords.get(token, 0) + 1
+        top_terms = [k for k, _ in sorted(keywords.items(), key=lambda kv: kv[1], reverse=True)[:10]]
+        return {
+            "company": company_name,
+            "confidence": "低",
+            "segments": [],
+            "products": [{"name": t, "revenue_share": "未取得", "evidence_title": "標題高頻詞", "confidence": "低"} for t in top_terms[:8]],
+            "market_focus": [],
+            "industry_search_queries": generic_company_discovery_queries(company_name)[:4],
+            "missing_data": ["Groq 未啟用；僅能用標題高頻詞初步提示，不能視為產品比重"],
+            "evidence": records[:8],
+            "method": "rule_fallback_no_groq",
+        }
+
+    system_prompt = """
+你是台灣股票研究員的公司產品結構抽取器。
+你只能根據使用者提供的搜尋結果資料抽取，不可以使用資料外常識，也不可以預設產品線。
+請嚴格輸出 JSON，不要 markdown。
+
+任務：
+1. 從資料中抽取公司揭露的事業部、產品線、營收比重、獲利來源或市場關注題材。
+2. 每個 segment/product 都必須附 evidence_title；沒有明確比重就寫「未取得」。
+3. evidence_type 只能是 official / exchange / media / inferred_from_titles。
+4. 若只是新聞推論，confidence 不可給高。
+5. 根據抽出的 segment/product 產生下一輪產業新聞搜尋式；不可加入資料裡沒出現過的產品線。
+6. 如果資料不足，missing_data 要明確說明。
+7. 回傳 JSON 欄位：
+{
+  "company": "...",
+  "confidence": "高/中/低",
+  "segments": [
+    {"name": "...", "revenue_share": "未取得或明確比重", "evidence_type": "...", "evidence_title": "...", "confidence": "高/中/低"}
+  ],
+  "products": [
+    {"name": "...", "linked_segment": "...", "revenue_share": "未取得或明確比重", "evidence_type": "...", "evidence_title": "...", "confidence": "高/中/低"}
+  ],
+  "market_focus": [
+    {"theme": "...", "reason": "...", "evidence_type": "...", "evidence_title": "...", "confidence": "高/中/低"}
+  ],
+  "industry_search_queries": ["...最多8個"],
+  "missing_data": ["..."],
+  "evidence": [{"title":"...", "domain":"...", "url":"..."}]
+}
+"""
+    payload = {
+        "company": company_name,
+        "user_query": user_query,
+        "sources": records,
+    }
+    try:
+        client = Groq(api_key=get_groq_api_key())
+        completion = client.chat.completions.create(
+            model=get_groq_model_heavy() if get_groq_model_heavy() else get_groq_model_light(),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            temperature=0.05,
+            max_tokens=1400,
+        )
+        raw = completion.choices[0].message.content.strip().strip("`").strip()
+        if raw.lower().startswith("json"):
+            raw = raw[4:].strip()
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("Groq did not return a dict")
+        data.setdefault("company", company_name)
+        data.setdefault("evidence", records[:8])
+        data.setdefault("method", "groq_evidence_extraction")
+        return data
+    except Exception as exc:
+        return {
+            "company": company_name,
+            "confidence": "低",
+            "segments": [],
+            "products": [],
+            "market_focus": [],
+            "industry_search_queries": generic_company_discovery_queries(company_name)[:4],
+            "missing_data": [f"Groq 產品結構抽取失敗：{exc}"],
+            "evidence": records[:8],
+            "method": "groq_failed",
+        }
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def bootstrap_company_structure_cached(company_name: str, aliases_key: str, user_query: str, time_range: str) -> dict:
+    aliases = [x for x in aliases_key.split("||") if x]
+    sources = fetch_company_bootstrap_sources(company_name, aliases, time_range="不限時間", max_items=28)
+    structure = groq_extract_company_structure(company_name, sources, user_query=user_query)
+    return {
+        "sources": sources.to_dict("records") if sources is not None and not sources.empty else [],
+        "structure": structure,
+    }
+
+
+def build_company_bootstrap_plan(user_query: str, time_range: str = "最近 24 小時", search_orientation: str = "自動判斷") -> dict | None:
+    profile = detect_company_focus_profile(user_query)
+    if not profile:
+        return None
+    company_name = profile.get("canonical", "")
+    aliases = profile.get("aliases", [])
+    aliases_key = "||".join(aliases[:12])
+    boot = bootstrap_company_structure_cached(company_name, aliases_key, user_query, time_range)
+    structure = boot.get("structure", {}) or {}
+    extracted_queries = structure.get("industry_search_queries", []) or []
+    extracted_queries = [clean_text(q) for q in extracted_queries if clean_text(q)]
+
+    # If Groq/source extraction does not generate enough queries, keep generic structure queries.
+    if len(extracted_queries) < 3:
+        extracted_queries += generic_company_discovery_queries(company_name, aliases)[:4]
+
+    # Company-centric queries should include structure-discovery and current company news.
+    company_queries = generic_company_discovery_queries(company_name, aliases)[:4] + extracted_queries[:8]
+    company_queries = list(dict.fromkeys(company_queries))[:10]
+
+    focus_terms = []
+    for section in ["segments", "products", "market_focus"]:
+        for item in structure.get(section, []) or []:
+            if isinstance(item, dict):
+                focus_terms.append(clean_text(item.get("name") or item.get("theme") or ""))
+    focus_terms = [x for x in focus_terms if x]
+
+    return {
+        "mode": "company_bootstrap_groq" if groq_is_enabled() else "company_bootstrap_rules",
+        "focus_strategy": "company_product_discovery",
+        "profile_id": profile.get("profile_id", ""),
+        "core_topic_zh": profile.get("display_zh", profile.get("canonical", "")),
+        "core_entities": [company_name] + aliases[:8],
+        "focus_aliases": aliases,
+        "related_companies": profile.get("related_companies", []),
+        "focus_terms": focus_terms,
+        "company_structure": structure,
+        "bootstrap_sources": boot.get("sources", []),
+        "search_queries": company_queries,
+        "tickers": profile.get("tickers", [])[:10],
+        "include_terms": focus_terms[:18],
+        "exclude_terms": profile.get("exclude_terms", []),
+        "reason": "先用通用查詢找公司營收/產品/事業結構，再由 Groq 只根據搜尋證據抽取產品線與產業暴露，最後才產生第二輪新聞搜尋式。",
+    }
+
+
 def default_search_plan(user_query: str) -> dict:
-    """Fallback when Groq is not available."""
+    """Fallback when Groq is not available.
+
+    V40: if the query contains a known company/ticker, use a company-centric plan instead
+    of blindly splitting keywords.
+    """
+    company_plan = build_company_centric_search_plan(user_query, search_orientation="自動判斷")
+    if company_plan:
+        return company_plan
+
     q = clean_text(user_query)
     terms = parse_search_terms(q)
     if not terms:
@@ -412,6 +836,7 @@ def default_search_plan(user_query: str) -> dict:
 
     return {
         "mode": "fallback",
+        "focus_strategy": "keyword",
         "core_topic_zh": q,
         "search_queries": terms[:6] if terms else [q],
         "tickers": [],
@@ -422,7 +847,7 @@ def default_search_plan(user_query: str) -> dict:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def groq_build_search_plan(user_query: str, time_range: str = "最近 24 小時") -> dict:
+def groq_build_search_plan(user_query: str, time_range: str = "最近 24 小時", search_orientation: str = "自動判斷") -> dict:
     """Use Groq to turn a natural-language research request into search queries.
 
     Output is JSON so the app can execute several focused RSS searches.
@@ -430,6 +855,11 @@ def groq_build_search_plan(user_query: str, time_range: str = "最近 24 小時"
     user_query = clean_text(user_query)
     if not user_query:
         return default_search_plan(user_query)
+
+    # V40: company/ticker queries must stay company-centric.
+    company_plan = build_company_centric_search_plan(user_query, time_range=time_range, search_orientation=search_orientation)
+    if company_plan and search_orientation in ["自動判斷", "公司本體優先", "產業主題掃描"]:
+        return company_plan
 
     api_key = get_groq_api_key()
     if not api_key:
@@ -454,14 +884,16 @@ JSON 格式：
 規則：
 1. search_queries 要用英文，因為 Google News / Yahoo Finance 英文財經新聞較完整。
 2. 每個 query 不要太長，適合新聞搜尋。
-3. 如果使用者問 AI 軟硬體產業，要涵蓋：
-   - AI chips / GPU / CPU / accelerator
-   - AI servers / data centers / cloud capex
-   - AI software / enterprise AI / inference
-   - semiconductor supply chain / memory / HBM / networking / power / cooling
-4. 若問題涉及股票或公司，tickers 放美股 ticker；台股可先不放 ticker。
-5. 避免過度寬泛，只給最可能抓到財經新聞的查詢。
-6. 不要把使用者問題翻成中文查詢；主要查英文。
+3. 先判斷使用者是在問「特定公司」還是「產業主題」：
+   - 若出現公司名稱、股票代號、台股代號，例如 1303、南亞、Nan Ya Plastics，必須採「公司本體優先」。
+   - 公司本體優先時，search_queries 必須包含公司英文名、股票代號、子公司/轉投資、產品線、財報、公告、合作案與直接供應鏈。
+   - 不可以把「南亞 1303」這種問題擴散成只查 NVIDIA、AMD、GPU、AI server 這類大環境。
+4. 如果使用者選擇產業主題掃描，但問題裡有特定公司/股票代號，仍要先查公司營收/產品/事業結構，再掃描資料中抽出的產業鏈；不可直接用既定產業分類。
+5. 不可以預設產品線；產品線必須來自搜尋資料或公司公告/年報/法說/新聞標題。
+6. 只有當使用者明確問「AI 軟硬體產業」、「半導體產業」、「市場整體」且沒有特定公司時，才做純產業主題掃描。
+7. 若問題涉及股票或公司，tickers 放美股 ticker；台股也可以用 1303.TW / 2408.TW / 8046.TW 這種格式。
+8. 對台灣公司，可以混合英文與繁中查詢，因為本地公司新聞常見於中文來源。
+9. 避免過度寬泛，只給最可能抓到財經新聞的查詢。
 """.strip()
 
     user_prompt = f"""
@@ -500,6 +932,7 @@ JSON 格式：
 
         return {
             "mode": "groq",
+            "focus_strategy": "industry_theme" if search_orientation == "產業主題掃描" else "auto",
             "core_topic_zh": clean_text(data.get("core_topic_zh", user_query)),
             "search_queries": queries or [user_query],
             "tickers": tickers,
@@ -1119,6 +1552,71 @@ def build_news_bundle_csv(feed: pd.DataFrame) -> bytes:
     return df.to_csv(index=False).encode("utf-8-sig")
 
 
+
+def render_company_industry_context(query_plan: dict | None):
+    if not query_plan:
+        return
+    if query_plan.get("focus_strategy") not in ["company_product_discovery", "company_industry_decomposition", "company_centric"]:
+        return
+
+    structure = query_plan.get("company_structure", {}) or {}
+    sources = query_plan.get("bootstrap_sources", []) or []
+
+    with st.expander("公司產品結構自動發現 / 搜尋依據", expanded=True):
+        st.markdown(f"**搜尋邏輯：** {query_plan.get('reason','')}")
+
+        if structure:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("抽取信心", structure.get("confidence", "未取得"))
+            c2.metric("事業部數", len(structure.get("segments", []) or []))
+            c3.metric("產品線數", len(structure.get("products", []) or []))
+
+            segments = structure.get("segments", []) or []
+            if segments:
+                st.markdown("**由資料抽取的事業部 / 營收比重**")
+                st.dataframe(pd.DataFrame(segments), use_container_width=True)
+            else:
+                st.info("尚未從公開資料抽出明確事業部或營收比重。")
+
+            products = structure.get("products", []) or []
+            if products:
+                st.markdown("**由資料抽取的產品線**")
+                st.dataframe(pd.DataFrame(products), use_container_width=True)
+
+            market_focus = structure.get("market_focus", []) or []
+            if market_focus:
+                st.markdown("**由資料推導的市場關注題材**")
+                st.dataframe(pd.DataFrame(market_focus), use_container_width=True)
+
+            missing = structure.get("missing_data", []) or []
+            if missing:
+                st.markdown("**資料缺口 / 不確定處**")
+                for x in missing:
+                    st.warning(str(x))
+
+        else:
+            st.info("尚未產生公司產品結構。")
+
+        st.markdown("**第一輪公司定位資料來源**")
+        if sources:
+            src_rows = []
+            for s in sources[:12]:
+                src_rows.append({
+                    "title": s.get("title", ""),
+                    "domain": s.get("domain", ""),
+                    "url": s.get("url", ""),
+                    "source_query": s.get("source_query", ""),
+                })
+            st.dataframe(pd.DataFrame(src_rows), use_container_width=True)
+        else:
+            st.caption("沒有可用來源。")
+
+        st.markdown("**第二輪實際新聞搜尋式**")
+        for q in query_plan.get("search_queries", []):
+            st.code(q, language="text")
+
+
+
 def render_clipboard_button(text: str, button_label: str = "一鍵複製 Markdown 新聞包"):
     """Render a browser-side copy-to-clipboard button.
 
@@ -1240,34 +1738,42 @@ def fetch_google_news_rss(query: str, max_items: int = 20, preferred_domains=Non
         queries.append(f'{base_query} site:{d}')
 
     for q in queries:
-        url = f"https://news.google.com/rss/search?q={quote_plus(q)}&hl=en-US&gl=US&ceid=US:en"
-        feed = feedparser.parse(url)
+        locales = [("en-US", "US", "US:en", "en")]
+        q_text = str(q)
+        has_cjk = any("\u4e00" <= ch <= "\u9fff" for ch in q_text)
+        tw_hint = has_cjk or ".TW" in q_text.upper() or any(x in q_text for x in ["台股", "台灣", "南亞", "南亞科", "台光電", "金像電"])
+        if tw_hint:
+            locales.append(("zh-TW", "TW", "TW:zh-Hant", "zh-TW"))
 
-        for entry in feed.entries[:max_items]:
-            title = clean_text(getattr(entry, "title", ""))
-            link = getattr(entry, "link", "")
-            source_title = ""
-            try:
-                source_title = clean_text(entry.source.title)
-            except Exception:
+        for hl, gl, ceid, lang in locales:
+            url = f"https://news.google.com/rss/search?q={quote_plus(q)}&hl={hl}&gl={gl}&ceid={ceid}"
+            feed = feedparser.parse(url)
+
+            for entry in feed.entries[:max_items]:
+                title = clean_text(getattr(entry, "title", ""))
+                link = getattr(entry, "link", "")
                 source_title = ""
+                try:
+                    source_title = clean_text(entry.source.title)
+                except Exception:
+                    source_title = ""
 
-            domain = guess_domain(link)
-            # Google News links may hide original domain. Use source title as a fallback.
-            if "news.google.com" in domain and source_title:
-                domain = source_title.lower().replace(" ", "") + " (via Google News)"
+                domain = guess_domain(link)
+                # Google News links may hide original domain. Use source title as a fallback.
+                if "news.google.com" in domain and source_title:
+                    domain = source_title.lower().replace(" ", "") + " (via Google News)"
 
-            rows.append({
-                "time_utc": parse_feed_datetime(entry),
-                "data_type": "公司/財經新聞",
-                "source_type": "Google News RSS",
-                "title": title,
-                "url": link,
-                "domain": domain,
-                "source_country": guess_source_country(domain),
-                "language": "auto",
-                "source_query": q,
-            })
+                rows.append({
+                    "time_utc": parse_feed_datetime(entry),
+                    "data_type": "公司/財經新聞",
+                    "source_type": "Google News RSS",
+                    "title": title,
+                    "url": link,
+                    "domain": domain,
+                    "source_country": guess_source_country(domain),
+                    "language": lang,
+                    "source_query": q,
+                })
 
     df = pd.DataFrame(rows)
     if df.empty:
@@ -1446,6 +1952,9 @@ def search_finance_news(
         return pd.DataFrame()
 
     df = enrich_articles(df, translate_titles=translate_titles, translation_mode=translation_mode, groq_translate_top_n=groq_translate_top_n, heavy_translate_top_n=heavy_translate_top_n, freshness_mode=freshness_mode, time_range=time_range)
+
+    # V40: for company/ticker queries, suppress broad macro-only AI background when enough company-specific results exist.
+    df = apply_company_focus_filter_and_rank(df, query_plan)
 
     # Final cap after union/boost searches.
     if len(df) > max_items:
@@ -2999,7 +3508,7 @@ def build_graph(feed: pd.DataFrame) -> str:
 # UI
 # -------------------------------
 
-st.set_page_config(page_title="Global News Radar V39", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Global News Radar V42", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -3068,7 +3577,7 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V39：修正地圖錯位錯誤版")
+st.title("🌍 Global News Radar V42：產品結構自動發現版")
 
 with st.sidebar:
     st.header("搜尋")
@@ -3076,7 +3585,13 @@ with st.sidebar:
         "搜尋模式",
         ["自然語言研究搜尋", "精準關鍵字"],
         index=0,
-        help="自然語言模式會先用 Groq 把問題拆成多個財經新聞搜尋式；精準關鍵字則照你輸入的字查。"
+        help="自然語言模式會先用 Groq 或公司規則把問題拆成多個財經新聞搜尋式；精準關鍵字則照你輸入的字查。"
+    )
+    search_orientation = st.radio(
+        "搜尋取向",
+        ["自動判斷", "公司本體優先", "產業主題掃描"],
+        index=0,
+        help="若輸入特定公司，會先用通用查詢找公司營收/產品/事業結構，再由 Groq 根據證據抽取產品線；不是預設產品線。"
     )
     if search_mode == "自然語言研究搜尋":
         query = st.text_area(
@@ -3197,7 +3712,7 @@ if search_button:
     with st.spinner("正在建立搜尋策略與搜尋財經新聞..."):
         query_plan = None
         if search_mode == "自然語言研究搜尋":
-            query_plan = groq_build_search_plan(query, time_range=time_range)
+            query_plan = groq_build_search_plan(query, time_range=time_range, search_orientation=search_orientation)
             st.session_state["last_query_plan"] = query_plan
         else:
             st.session_state["last_query_plan"] = default_search_plan(query)
@@ -3363,7 +3878,7 @@ def run_realtime_supply_chain_verification(candidates: pd.DataFrame, max_results
 
 def render_realtime_verification_tab(feed: pd.DataFrame, time_range: str):
     st.subheader("即時供應鏈驗證")
-    st.caption("V39：搜尋完成後會自動背景驗證 Top 關係；這頁只是讓你查看結果或手動重跑。")
+    st.caption("V42：搜尋完成後會自動背景驗證 Top 關係；這頁只是讓你查看結果或手動重跑。")
     if feed is None or feed.empty:
         st.info("目前沒有新聞資料。請先搜尋一次。")
         return
@@ -3408,7 +3923,8 @@ tab_feed, tab_map, tab_graph, tab_verify, tab_delta, tab_candidates, tab_raw = s
 
 with tab_feed:
     st.subheader("統合新聞流")
-    st.caption("V39：搜尋後會自動背景驗證供應鏈關係，並直接反映到方案 A/B/C。")
+    st.caption("V42：特定公司會先做產品結構自動發現，再依據抽出的產品/事業線搜尋新聞。")
+    render_company_industry_context(st.session_state.get("last_query_plan", {}))
 
     if not feed.empty:
         st.markdown("### 複製新聞包")
@@ -3508,7 +4024,7 @@ with tab_feed:
 
 with tab_map:
     st.subheader("統合地圖 / 供應鏈視圖")
-    st.caption("V39：公司辨識不再只靠主檔；OpenAI 等模型公司會進入供應鏈視圖。地圖標籤改成錯位、截斷與可點擊資訊卡。")
+    st.caption("V42：公司辨識不再只靠主檔；OpenAI 等模型公司會進入供應鏈視圖。地圖標籤改成錯位、截斷與可點擊資訊卡。")
 
     map_sheet_a, map_sheet_b, map_sheet_c, map_sheet_old = st.tabs([
         "方案 A｜供應鏈地理圖",

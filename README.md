@@ -1,19 +1,34 @@
-# Global News Radar V39
+# Global News Radar V42
 
-V39 fixes the V38 runtime error.
+V42 adds generic company product-structure discovery.
 
-## Fix
+## Key change
 
-- Adds missing `import math`, which is required by `add_display_offsets()`.
-- Keeps V38 improvements:
-  - OpenAI and AI model companies are detected.
-  - Map labels are compact and offset.
-  - Node popups show useful company/news information.
+The app no longer hardcodes Nan Ya's products or segment mix as the answer.
+
+New flow:
+
+1. Detect company / ticker.
+2. Run generic company bootstrap queries:
+   - annual report revenue breakdown
+   - investor presentation revenue mix
+   - business segments
+   - product revenue mix
+   - 產品別營收 / 營收比重 / 年報 / 法說
+3. Send the retrieved titles / metadata to Groq.
+4. Groq extracts only what appears in the evidence:
+   - segments
+   - products
+   - revenue share if explicitly found
+   - market focus
+   - missing data
+5. Generate second-stage news search queries from extracted evidence.
+
+This is designed to work for any company, not only Nan Ya.
 
 ## Upload files
 
 Upload:
-
 - app.py
 - requirements.txt
 - README.md
