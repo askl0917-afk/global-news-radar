@@ -24,8 +24,8 @@ from streamlit_folium import st_folium
 
 
 # ============================================================
-# Global News Radar V42
-# 產品結構自動發現版
+# Global News Radar V43
+# 產品結構抽取備援修正版
 #
 # What changed:
 # - Main financial/company news no longer depends only on GDELT DOC API.
@@ -641,11 +641,303 @@ def fetch_company_bootstrap_sources(company_name: str, aliases: list[str] | None
     return df.sort_values(["bootstrap_score", "time_utc"], ascending=[False, False]).head(max_items)
 
 
-def groq_extract_company_structure(company_name: str, sources_df: pd.DataFrame, user_query: str = "") -> dict:
-    """Ask Groq to extract product/segment structure only from provided search evidence.
 
-    If Groq is unavailable, return a rule-based low-confidence structure.
+def normalize_extracted_name(name: str, company_name: str = "", aliases: list[str] | None = None) -> str:
+    """Clean extracted segment/product name without assuming any product taxonomy."""
+    x = clean_text(str(name or ""))
+    aliases = aliases or []
+    for a in [company_name] + aliases:
+        a = clean_text(str(a or ""))
+        if a:
+            x = x.replace(a, "")
+            x = x.replace(a.upper(), "")
+            x = x.replace(a.lower(), "")
+    x = re.sub(r"^[的之於在和與及、：:｜|\-–—\s]+", "", x)
+    x = re.sub(r"[的之於在和與及、：:｜|\-–—\s]+$", "", x)
+    x = re.sub(r"(今年|明年|去年|第一季|第二季|第三季|第四季|Q[1-4]|全年|累計|目前|公司|集團|股票|股價|EPS|營收|收入|業績)$", "", x, flags=re.I).strip()
+    return x[:60]
+
+
+def looks_like_noise_term(x: str) -> bool:
+    x0 = clean_text(str(x or ""))
+    if len(x0) < 2:
+        return True
+    low = x0.lower()
+    noise = {
+        "stock", "stocks", "market", "news", "analysis", "report", "revenue", "earnings",
+        "eps", "corp", "corporation", "company", "industry", "asia pacific", "taiwan",
+        "今年", "明年", "去年", "營收", "財報", "股價", "股票", "市場", "產業", "分析", "報告",
+        "公司", "集團", "第一季", "第二季", "第三季", "第四季"
+    }
+    return low in noise or x0 in noise
+
+
+def extract_ratio_from_text(text: str) -> str:
+    text = clean_text(text)
+    # Explicit percentages.
+    m = re.search(r"(?:逾|超過|約|近|達|占|佔|占比|佔比|比重|上看|突破)?\s*(\d+(?:\.\d+)?\s?%)", text)
+    if m:
+        return m.group(1).replace(" ", "")
+    # Chinese "成" phrasing, e.g. 逾5成 / 逾五成.
+    m = re.search(r"(?:逾|超過|約|近|達|占|佔|占比|佔比|比重)?\s*([一二三四五六七八九十兩\d]+成)", text)
+    if m:
+        return m.group(1)
+    return "未取得"
+
+
+def build_rule_industry_queries(company_name: str, structure: dict, aliases: list[str] | None = None) -> list[str]:
+    aliases = aliases or []
+    names = [company_name] + aliases
+    zh_alias = next((x for x in names if any("\u4e00" <= ch <= "\u9fff" for ch in str(x))), company_name)
+    en_alias = next((x for x in names if str(x).isascii()), company_name)
+
+    extracted = []
+    for section in ["segments", "products", "market_focus"]:
+        for item in structure.get(section, []) or []:
+            if not isinstance(item, dict):
+                continue
+            nm = clean_text(item.get("name") or item.get("theme") or "")
+            if nm and not looks_like_noise_term(nm):
+                extracted.append(nm)
+    extracted = list(dict.fromkeys(extracted))[:8]
+
+    queries = []
+    for nm in extracted:
+        # Mixed Chinese/English, generated from extracted evidence only.
+        queries.append(f'{zh_alias} {nm} 營收 比重 毛利率')
+        queries.append(f'"{en_alias}" "{nm}" revenue mix margin demand')
+        queries.append(f'{nm} 供需 報價 交期 產業 新聞')
+    if not queries:
+        queries = generic_company_discovery_queries(company_name, aliases)[:4]
+    return list(dict.fromkeys([q for q in queries if q]))[:10]
+
+
+def rule_extract_company_structure(company_name: str, records: list[dict], aliases: list[str] | None = None) -> dict:
+    """Rule fallback that extracts visible product/segment clues from titles.
+
+    This does NOT assume a product list. It only reacts to textual evidence such as:
+    - X 佔比逾5成
+    - X revenue share / product mix / business segment
+    - Product (ACRONYM) titles
+    - X Industry Analysis / X Market
     """
+    aliases = aliases or []
+    segments = []
+    products = []
+    market_focus = []
+    evidence = []
+
+    def add_segment(name, share, title, domain="", conf="中"):
+        nm = normalize_extracted_name(name, company_name, aliases)
+        if not nm or looks_like_noise_term(nm):
+            return
+        key = (nm, share)
+        existing = {(x.get("name"), x.get("revenue_share")) for x in segments}
+        if key in existing:
+            return
+        segments.append({
+            "name": nm,
+            "revenue_share": share or "未取得",
+            "evidence_type": "inferred_from_titles",
+            "evidence_title": title,
+            "domain": domain,
+            "confidence": conf,
+        })
+
+    def add_product(name, title, domain="", linked_segment="", share="未取得", conf="中"):
+        nm = normalize_extracted_name(name, company_name, aliases)
+        if not nm or looks_like_noise_term(nm):
+            return
+        existing = {x.get("name") for x in products}
+        if nm in existing:
+            return
+        products.append({
+            "name": nm,
+            "linked_segment": linked_segment or "未判定",
+            "revenue_share": share or "未取得",
+            "evidence_type": "inferred_from_titles",
+            "evidence_title": title,
+            "domain": domain,
+            "confidence": conf,
+        })
+
+    def add_focus(theme, reason, title, domain="", conf="中"):
+        th = normalize_extracted_name(theme, company_name, aliases)
+        if not th or looks_like_noise_term(th):
+            return
+        existing = {x.get("theme") for x in market_focus}
+        if th in existing:
+            return
+        market_focus.append({
+            "theme": th,
+            "reason": reason,
+            "evidence_type": "inferred_from_titles",
+            "evidence_title": title,
+            "domain": domain,
+            "confidence": conf,
+        })
+
+    for rec in records:
+        title = clean_text(rec.get("title", ""))
+        domain = clean_text(rec.get("domain", ""))
+        if not title:
+            continue
+        evidence.append({"title": title, "domain": domain, "url": rec.get("url", "")})
+
+        # Chinese ratio patterns: 「南亞電子材料佔比逾5成」、「AI營收比重...」
+        for m in re.finditer(r"([\u4e00-\u9fffA-Za-z0-9／/&\-\s]{2,40}?)(?:營收|收入|業績)?(?:占比|佔比|比重|占|佔)(?:已|將|可望|約|近|達|逾|超過|突破|上看)?\s*([一二三四五六七八九十兩\d]+成|\d+(?:\.\d+)?\s?%)", title):
+            name, share = m.group(1), m.group(2)
+            add_segment(name, share.replace(" ", ""), title, domain, conf="中高")
+            add_focus(name, f"標題出現比重線索：{share}", title, domain, conf="中高")
+
+        # English ratio patterns.
+        for m in re.finditer(r"([A-Za-z][A-Za-z0-9／/&\-\s]{2,45}?)(?:revenue|sales|business)?\s*(?:share|mix|accounted for|represents|contributes)\s*(?:about|over|around|nearly|more than)?\s*(\d+(?:\.\d+)?\s?%)", title, flags=re.I):
+            name, share = m.group(1), m.group(2)
+            add_segment(name, share.replace(" ", ""), title, domain, conf="中高")
+
+        # Product phrase with acronym, e.g. Biaxially Oriented Polypropylene (BOPP)
+        for m in re.finditer(r"([A-Z][A-Za-z][A-Za-z0-9／/&\-\s]{4,70}?)\s*\(([A-Z0-9]{2,12})\)", title):
+            phrase = f"{m.group(1).strip()} ({m.group(2).strip()})"
+            add_product(phrase, title, domain, conf="中")
+
+        # Generic English market/industry phrase: "Epoxy Resin Industry Analysis", "X Market".
+        for m in re.finditer(r"([A-Z][A-Za-z0-9／/&\-\s]{3,55}?)(?:\s+Industry|\s+Market|\s+Sector|\s+Product)", title):
+            phrase = m.group(1).strip()
+            if len(phrase.split()) <= 7:
+                add_product(phrase, title, domain, conf="低")
+
+        # Generic Chinese business/product phrase around common structural terms.
+        for m in re.finditer(r"([\u4e00-\u9fffA-Za-z0-9／/&\-]{2,20})(?:材料|產品|事業|業務|產業|供應鏈|營收)", title):
+            phrase = m.group(0)
+            add_product(phrase, title, domain, conf="低")
+
+        # Market focus clues from titles with growth/season/increase.
+        if re.search(r"(季增|年增|創高|續看|成長|需求|供應|報價|漲|缺|交期|擴產|合作|AI|data center|server)", title, flags=re.I):
+            # Avoid making whole title a product. Use a short cleaned clue.
+            clue = re.sub(r"[-｜|:：].*$", "", title)
+            clue = clue[:38]
+            add_focus(clue, "標題出現營運動能/市場關注線索", title, domain, conf="中")
+
+    # If a segment has share and a product with same name exists, avoid duplicate product list bloat.
+    seg_names = {x["name"] for x in segments}
+    products = [p for p in products if p["name"] not in seg_names]
+
+    confidence = "中" if (segments or products or market_focus) else "低"
+    missing = []
+    if not segments:
+        missing.append("未從標題/摘要抽出明確事業部或營收比重；需補官方年報/法說資料。")
+    else:
+        missing.append("目前多為標題/新聞線索，仍需官方資料確認比重。")
+    if not products:
+        missing.append("未抽出明確產品線；第二輪搜尋將先用通用公司定位查詢。")
+
+    base = {
+        "company": company_name,
+        "confidence": confidence,
+        "segments": segments[:12],
+        "products": products[:12],
+        "market_focus": market_focus[:12],
+        "industry_search_queries": [],
+        "missing_data": missing,
+        "evidence": evidence[:12],
+        "method": "rule_title_ratio_fallback",
+    }
+    base["industry_search_queries"] = build_rule_industry_queries(company_name, base, aliases)
+    return base
+
+
+def merge_company_structures(rule_data: dict, groq_data: dict | None, groq_error: str | None = None) -> dict:
+    """Groq can enhance rule extraction, but it should never erase rule evidence."""
+    if not isinstance(rule_data, dict):
+        rule_data = {}
+    if not isinstance(groq_data, dict):
+        groq_data = {}
+
+    merged = {
+        "company": groq_data.get("company") or rule_data.get("company", ""),
+        "confidence": groq_data.get("confidence") or rule_data.get("confidence", "低"),
+        "segments": [],
+        "products": [],
+        "market_focus": [],
+        "industry_search_queries": [],
+        "missing_data": [],
+        "evidence": groq_data.get("evidence") or rule_data.get("evidence", []),
+        "method": "rule_plus_groq" if groq_data else "rule_fallback",
+    }
+
+    def merge_items(section, key_name):
+        seen = set()
+        items = []
+        for src in [rule_data, groq_data]:
+            for item in src.get(section, []) or []:
+                if not isinstance(item, dict):
+                    continue
+                key = clean_text(item.get(key_name) or item.get("name") or item.get("theme") or "")
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                items.append(item)
+        return items[:16]
+
+    merged["segments"] = merge_items("segments", "name")
+    merged["products"] = merge_items("products", "name")
+    merged["market_focus"] = merge_items("market_focus", "theme")
+
+    queries = []
+    for q in (rule_data.get("industry_search_queries", []) or []) + (groq_data.get("industry_search_queries", []) or []):
+        q = clean_text(q)
+        if q and q not in queries:
+            queries.append(q)
+    merged["industry_search_queries"] = queries[:12] or rule_data.get("industry_search_queries", [])[:8]
+
+    missing = []
+    for x in (rule_data.get("missing_data", []) or []) + (groq_data.get("missing_data", []) or []):
+        if x and x not in missing:
+            missing.append(x)
+    if groq_error:
+        missing.insert(0, f"Groq 產品結構抽取失敗，已啟用規則備援：{groq_error}")
+    merged["missing_data"] = missing[:8]
+
+    # Confidence floor: if rule found ratio/product clues, don't show "低" just because Groq failed.
+    if merged["segments"]:
+        merged["confidence"] = "中" if merged["confidence"] == "低" else merged["confidence"]
+    if any("中高" in str(x.get("confidence", "")) for x in merged["segments"]):
+        merged["confidence"] = "中高"
+    return merged
+
+
+def safe_parse_groq_json(raw: str) -> dict:
+    """Robust JSON parse for LLM output."""
+    raw = (raw or "").strip()
+    raw = raw.strip("`").strip()
+    if raw.lower().startswith("json"):
+        raw = raw[4:].strip()
+    # Try direct first.
+    try:
+        return json.loads(raw)
+    except Exception:
+        pass
+    # Extract outermost JSON object.
+    s = raw.find("{")
+    e = raw.rfind("}")
+    if s != -1 and e != -1 and e > s:
+        chunk = raw[s:e+1]
+        try:
+            return json.loads(chunk)
+        except Exception:
+            pass
+    raise ValueError("Groq output is not valid JSON")
+
+
+def groq_extract_company_structure(company_name: str, sources_df: pd.DataFrame, user_query: str = "", aliases: list[str] | None = None) -> dict:
+    """Extract product/segment structure with rule fallback + Groq enhancement.
+
+    V43 design:
+    1. Rule extractor runs first and preserves visible evidence.
+    2. Groq is optional enhancement.
+    3. If Groq JSON breaks, rule results remain.
+    """
+    aliases = aliases or []
     if sources_df is None or sources_df.empty:
         return {
             "company": company_name,
@@ -653,14 +945,14 @@ def groq_extract_company_structure(company_name: str, sources_df: pd.DataFrame, 
             "segments": [],
             "products": [],
             "market_focus": [],
-            "industry_search_queries": [],
+            "industry_search_queries": generic_company_discovery_queries(company_name, aliases)[:4],
             "missing_data": ["未取得可用的公司產品/營收結構資料"],
             "evidence": [],
             "method": "no_sources",
         }
 
     records = []
-    for _, r in sources_df.head(24).iterrows():
+    for _, r in sources_df.head(28).iterrows():
         records.append({
             "title": clean_text(r.get("title", "")),
             "domain": clean_text(r.get("domain", "")),
@@ -669,53 +961,39 @@ def groq_extract_company_structure(company_name: str, sources_df: pd.DataFrame, 
             "time_utc": str(r.get("time_utc", "")),
         })
 
-    # Fallback if no Groq.
+    rule_data = rule_extract_company_structure(company_name, records, aliases=aliases)
+
+    # If no Groq, rule result is the answer.
     if not groq_is_enabled():
-        # Extract candidate terms from titles only; no guessed revenue shares.
-        keywords = {}
-        for rec in records:
-            text = rec["title"]
-            for token in re.findall(r"[A-Za-z][A-Za-z0-9&\\-/]{2,}|[\u4e00-\u9fff]{2,8}", text):
-                if token.lower() in ["the", "and", "for", "with", "from", "news", "stock", "market"]:
-                    continue
-                keywords[token] = keywords.get(token, 0) + 1
-        top_terms = [k for k, _ in sorted(keywords.items(), key=lambda kv: kv[1], reverse=True)[:10]]
-        return {
-            "company": company_name,
-            "confidence": "低",
-            "segments": [],
-            "products": [{"name": t, "revenue_share": "未取得", "evidence_title": "標題高頻詞", "confidence": "低"} for t in top_terms[:8]],
-            "market_focus": [],
-            "industry_search_queries": generic_company_discovery_queries(company_name)[:4],
-            "missing_data": ["Groq 未啟用；僅能用標題高頻詞初步提示，不能視為產品比重"],
-            "evidence": records[:8],
-            "method": "rule_fallback_no_groq",
-        }
+        rule_data["missing_data"] = list(dict.fromkeys(
+            ["Groq 未啟用；目前使用規則抽取，需用官方資料進一步驗證。"] + rule_data.get("missing_data", [])
+        ))
+        return rule_data
 
     system_prompt = """
 你是台灣股票研究員的公司產品結構抽取器。
 你只能根據使用者提供的搜尋結果資料抽取，不可以使用資料外常識，也不可以預設產品線。
-請嚴格輸出 JSON，不要 markdown。
+請嚴格輸出 JSON，不要 markdown，不要解釋。
 
 任務：
 1. 從資料中抽取公司揭露的事業部、產品線、營收比重、獲利來源或市場關注題材。
 2. 每個 segment/product 都必須附 evidence_title；沒有明確比重就寫「未取得」。
 3. evidence_type 只能是 official / exchange / media / inferred_from_titles。
-4. 若只是新聞推論，confidence 不可給高。
+4. 若只是新聞標題推論，confidence 不可給高。
 5. 根據抽出的 segment/product 產生下一輪產業新聞搜尋式；不可加入資料裡沒出現過的產品線。
 6. 如果資料不足，missing_data 要明確說明。
 7. 回傳 JSON 欄位：
 {
   "company": "...",
-  "confidence": "高/中/低",
+  "confidence": "高/中高/中/低",
   "segments": [
-    {"name": "...", "revenue_share": "未取得或明確比重", "evidence_type": "...", "evidence_title": "...", "confidence": "高/中/低"}
+    {"name": "...", "revenue_share": "未取得或明確比重", "evidence_type": "...", "evidence_title": "...", "confidence": "高/中高/中/低"}
   ],
   "products": [
-    {"name": "...", "linked_segment": "...", "revenue_share": "未取得或明確比重", "evidence_type": "...", "evidence_title": "...", "confidence": "高/中/低"}
+    {"name": "...", "linked_segment": "...", "revenue_share": "未取得或明確比重", "evidence_type": "...", "evidence_title": "...", "confidence": "高/中高/中/低"}
   ],
   "market_focus": [
-    {"theme": "...", "reason": "...", "evidence_type": "...", "evidence_title": "...", "confidence": "高/中/低"}
+    {"theme": "...", "reason": "...", "evidence_type": "...", "evidence_title": "...", "confidence": "高/中高/中/低"}
   ],
   "industry_search_queries": ["...最多8個"],
   "missing_data": ["..."],
@@ -725,7 +1003,12 @@ def groq_extract_company_structure(company_name: str, sources_df: pd.DataFrame, 
     payload = {
         "company": company_name,
         "user_query": user_query,
-        "sources": records,
+        "sources": records[:18],
+        "rule_extraction_hint": {
+            "segments": rule_data.get("segments", []),
+            "products": rule_data.get("products", []),
+            "market_focus": rule_data.get("market_focus", []),
+        },
     }
     try:
         client = Groq(api_key=get_groq_api_key())
@@ -735,38 +1018,26 @@ def groq_extract_company_structure(company_name: str, sources_df: pd.DataFrame, 
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
             ],
-            temperature=0.05,
-            max_tokens=1400,
+            temperature=0.0,
+            max_tokens=1100,
         )
-        raw = completion.choices[0].message.content.strip().strip("`").strip()
-        if raw.lower().startswith("json"):
-            raw = raw[4:].strip()
-        data = json.loads(raw)
-        if not isinstance(data, dict):
+        raw = completion.choices[0].message.content
+        groq_data = safe_parse_groq_json(raw)
+        if not isinstance(groq_data, dict):
             raise ValueError("Groq did not return a dict")
-        data.setdefault("company", company_name)
-        data.setdefault("evidence", records[:8])
-        data.setdefault("method", "groq_evidence_extraction")
-        return data
+        groq_data.setdefault("company", company_name)
+        groq_data.setdefault("evidence", records[:8])
+        groq_data.setdefault("method", "groq_evidence_extraction")
+        return merge_company_structures(rule_data, groq_data)
     except Exception as exc:
-        return {
-            "company": company_name,
-            "confidence": "低",
-            "segments": [],
-            "products": [],
-            "market_focus": [],
-            "industry_search_queries": generic_company_discovery_queries(company_name)[:4],
-            "missing_data": [f"Groq 產品結構抽取失敗：{exc}"],
-            "evidence": records[:8],
-            "method": "groq_failed",
-        }
+        return merge_company_structures(rule_data, None, groq_error=str(exc))
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def bootstrap_company_structure_cached(company_name: str, aliases_key: str, user_query: str, time_range: str) -> dict:
     aliases = [x for x in aliases_key.split("||") if x]
     sources = fetch_company_bootstrap_sources(company_name, aliases, time_range="不限時間", max_items=28)
-    structure = groq_extract_company_structure(company_name, sources, user_query=user_query)
+    structure = groq_extract_company_structure(company_name, sources, user_query=user_query, aliases=aliases)
     return {
         "sources": sources.to_dict("records") if sources is not None and not sources.empty else [],
         "structure": structure,
@@ -1562,8 +1833,9 @@ def render_company_industry_context(query_plan: dict | None):
     structure = query_plan.get("company_structure", {}) or {}
     sources = query_plan.get("bootstrap_sources", []) or []
 
-    with st.expander("公司產品結構自動發現 / 搜尋依據", expanded=True):
+    with st.expander("公司產品結構抽取 / 搜尋依據", expanded=True):
         st.markdown(f"**搜尋邏輯：** {query_plan.get('reason','')}")
+        st.caption("V43：先從第一輪標題/來源做規則抽取，例如『佔比逾5成』『營收比重xx%』；Groq 只做補強，不是唯一判斷來源。")
 
         if structure:
             c1, c2, c3 = st.columns(3)
@@ -3508,7 +3780,7 @@ def build_graph(feed: pd.DataFrame) -> str:
 # UI
 # -------------------------------
 
-st.set_page_config(page_title="Global News Radar V42", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Global News Radar V43", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -3577,7 +3849,7 @@ div[data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Global News Radar V42：產品結構自動發現版")
+st.title("🌍 Global News Radar V43：產品結構抽取備援修正版")
 
 with st.sidebar:
     st.header("搜尋")
@@ -3878,7 +4150,7 @@ def run_realtime_supply_chain_verification(candidates: pd.DataFrame, max_results
 
 def render_realtime_verification_tab(feed: pd.DataFrame, time_range: str):
     st.subheader("即時供應鏈驗證")
-    st.caption("V42：搜尋完成後會自動背景驗證 Top 關係；這頁只是讓你查看結果或手動重跑。")
+    st.caption("V43：搜尋完成後會自動背景驗證 Top 關係；這頁只是讓你查看結果或手動重跑。")
     if feed is None or feed.empty:
         st.info("目前沒有新聞資料。請先搜尋一次。")
         return
@@ -3923,7 +4195,7 @@ tab_feed, tab_map, tab_graph, tab_verify, tab_delta, tab_candidates, tab_raw = s
 
 with tab_feed:
     st.subheader("統合新聞流")
-    st.caption("V42：特定公司會先做產品結構自動發現，再依據抽出的產品/事業線搜尋新聞。")
+    st.caption("V43：先用規則抽取保底，再用 Groq 補強；Groq JSON 失敗也不會把產品結構歸零。")
     render_company_industry_context(st.session_state.get("last_query_plan", {}))
 
     if not feed.empty:
@@ -4024,7 +4296,7 @@ with tab_feed:
 
 with tab_map:
     st.subheader("統合地圖 / 供應鏈視圖")
-    st.caption("V42：公司辨識不再只靠主檔；OpenAI 等模型公司會進入供應鏈視圖。地圖標籤改成錯位、截斷與可點擊資訊卡。")
+    st.caption("V43：公司辨識不再只靠主檔；OpenAI 等模型公司會進入供應鏈視圖。地圖標籤改成錯位、截斷與可點擊資訊卡。")
 
     map_sheet_a, map_sheet_b, map_sheet_c, map_sheet_old = st.tabs([
         "方案 A｜供應鏈地理圖",

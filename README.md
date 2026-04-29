@@ -1,30 +1,18 @@
-# Global News Radar V42
+# Global News Radar V43
 
-V42 adds generic company product-structure discovery.
+V43 fixes the product-structure discovery failure mode.
 
-## Key change
+## What changed
 
-The app no longer hardcodes Nan Ya's products or segment mix as the answer.
-
-New flow:
-
-1. Detect company / ticker.
-2. Run generic company bootstrap queries:
-   - annual report revenue breakdown
-   - investor presentation revenue mix
-   - business segments
-   - product revenue mix
-   - 產品別營收 / 營收比重 / 年報 / 法說
-3. Send the retrieved titles / metadata to Groq.
-4. Groq extracts only what appears in the evidence:
-   - segments
-   - products
-   - revenue share if explicitly found
-   - market focus
-   - missing data
-5. Generate second-stage news search queries from extracted evidence.
-
-This is designed to work for any company, not only Nan Ya.
+- Adds rule-based extraction before Groq:
+  - detects `佔比/占比/比重`
+  - detects `%` and `x成`
+  - detects product phrases from title patterns such as `(BOPP)` and `Industry/Market`
+  - detects market-focus clues such as 季增 / 年增 / 成長 / 需求 / 供應 / 報價 / 合作
+- Groq is now only an enhancement layer.
+- If Groq returns broken JSON, the app keeps rule extraction results instead of showing zero.
+- Second-stage news queries are generated from extracted segments/products when available.
+- The UI now shows that rule fallback is active when Groq fails.
 
 ## Upload files
 
